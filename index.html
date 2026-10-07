@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f6f3">
+    <meta name="description" content="Create, manage, and print your invoices from anywhere.">
+    <title>Masase Commerce Invoices</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main id="auth-panel" class="auth-layout">
+      <section class="auth-brand">
+        <a class="brand" href="./" aria-label="Masase invoices home">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>masase<span class="brand-light"> / invoices</span></span>
+        </a>
+        <div class="auth-pitch">
+          <span class="eyebrow">YOUR BUSINESS, IN GOOD ORDER</span>
+          <h1>Good work<br>deserves a<br><span>great invoice.</span></h1>
+          <p>Create clear, professional invoices and pick up where you left off on any device.</p>
+          <div class="auth-proof"><span class="proof-dot"></span> Your invoices, securely synced</div>
+        </div>
+        <span class="auth-footnote">A simpler way to keep business moving.</span>
+      </section>
+      <section class="auth-main">
+        <div class="auth-card">
+          <div class="mobile-brand brand">
+            <span class="brand-mark" aria-hidden="true">M</span>
+            <span>masase<span class="brand-light"> / invoices</span></span>
+          </div>
+          <span class="eyebrow" id="auth-eyebrow">WELCOME BACK</span>
+          <h2 id="auth-heading">Sign in to your account</h2>
+          <p class="muted" id="auth-description">Your business is right where you left it.</p>
+          <p class="notice notice-info" id="setup-notice" hidden></p>
+          <form id="auth-form">
+            <label class="field-label" for="auth-email">Email address</label>
+            <input id="auth-email" name="email" type="email" autocomplete="email" placeholder="you@business.com" required>
+            <label class="field-label" for="auth-password">Password</label>
+            <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters" required>
+            <button class="button button-primary button-wide" id="auth-submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
+          </form>
+          <p class="auth-switch"><span id="auth-switch-label">New to Masase?</span> <button class="text-button" id="auth-toggle" type="button">Create an account</button></p>
+          <p class="form-message" id="auth-message" role="status" aria-live="polite"></p>
+        </div>
+        <p class="auth-privacy">Your invoices are private to your account.</p>
+      </section>
+    </main>
+
+    <main id="app-panel" class="app-shell" hidden>
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="Masase invoices home">
+          <span class="brand-mark" aria-hidden="true">M</span>
+          <span>masase<span class="brand-light"> / invoices</span></span>
+        </a>
+        <nav class="workspace-nav" aria-label="Workspace">
+          <button class="nav-button active" id="nav-overview" type="button">Overview</button>
+          <button class="nav-button" id="nav-business" type="button">Business</button>
+          <button class="nav-button" id="nav-documents" type="button">Documents</button>
+          <button class="nav-button" id="nav-clients" type="button">Clients</button>
+        </nav>
+        <div class="account-area">
+          <select id="business-switcher" class="business-switcher" aria-label="Select business"></select>
+          <button class="button button-primary button-small" id="add-business" type="button">+ Business</button>
+          <span class="account-email" id="account-email"></span>
+          <button class="button button-quiet button-small" id="sign-out" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <section id="overview-view" class="page-wrap" hidden>
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">YOUR WORKSPACE</span>
+            <h1>Business overview</h1>
+            <p class="muted">A clear picture of every business, client, and document.</p>
+          </div>
+          <button class="button button-primary" id="overview-new-document" type="button"><span class="button-plus" aria-hidden="true">+</span> New document</button>
+        </div>
+        <p class="form-message" id="overview-message" role="status" aria-live="polite"></p>
+        <div class="summary-grid summary-grid-four">
+          <article class="summary-card"><span class="summary-label">Businesses</span><strong class="summary-value" id="overview-business-count">0</strong><span class="summary-hint">In your workspace</span><span class="summary-icon icon-violet" aria-hidden="true">⌂</span></article>
+          <article class="summary-card"><span class="summary-label">Clients</span><strong class="summary-value" id="overview-client-count">0</strong><span class="summary-hint">Across all businesses</span><span class="summary-icon icon-green" aria-hidden="true">♙</span></article>
+          <article class="summary-card"><span class="summary-label">Quotes</span><strong class="summary-value" id="overview-quote-count">0</strong><span class="summary-hint">Ready to become invoices</span><span class="summary-icon icon-amber" aria-hidden="true">✎</span></article>
+          <article class="summary-card"><span class="summary-label">Invoices</span><strong class="summary-value" id="overview-invoice-count">0</strong><span class="summary-hint">Across all businesses</span><span class="summary-icon icon-blue" aria-hidden="true">↗</span></article>
+        </div>
+        <div class="analytics-grid">
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Business activity</h2><p class="muted">Documents and clients by business.</p></div></div><div id="overview-business-chart" class="business-chart"></div></section>
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Document status</h2><p class="muted">Your quotes and invoices at a glance.</p></div></div><div id="overview-status-chart" class="status-chart"></div></section>
+        </div>
+        <section class="panel business-list-panel">
+          <div class="panel-heading"><div><h2>Your businesses</h2><p class="muted">Open a business to view its dashboard.</p></div><button class="text-button" id="overview-add-business" type="button">+ Add business</button></div>
+          <div id="overview-business-list" class="business-card-grid"></div>
+          <div class="empty-state" id="overview-empty" hidden><span class="empty-icon" aria-hidden="true">⌂</span><h3>Start with your first business</h3><p>Create a business profile to organize its logo, clients, quotes, and invoices.</p><button class="button button-primary" id="overview-create-first" type="button">Create a business <span aria-hidden="true">→</span></button></div>
+        </section>
+        <p class="page-footnote">Your businesses and documents are securely synced to your account.</p>
+      </section>
+
+      <section id="business-view" class="page-wrap" hidden>
+        <div class="page-heading">
+          <div class="business-heading">
+            <img class="business-logo" id="business-logo" alt="" hidden>
+            <span class="business-logo-fallback" id="business-logo-fallback" aria-hidden="true">M</span>
+            <div><span class="eyebrow">BUSINESS DASHBOARD</span><h1 id="business-title">Business</h1><p class="muted" id="business-subtitle">Your business at a glance.</p></div>
+          </div>
+          <div class="heading-actions"><button class="button button-secondary" id="edit-business" type="button">Edit business</button><button class="button button-primary" id="business-new-document" type="button"><span class="button-plus" aria-hidden="true">+</span> New document</button></div>
+        </div>
+        <p class="form-message" id="business-message" role="status" aria-live="polite"></p>
+        <div class="summary-grid">
+          <article class="summary-card"><span class="summary-label">Clients</span><strong class="summary-value" id="business-client-count">0</strong><span class="summary-hint">Saved for this business</span><span class="summary-icon icon-green" aria-hidden="true">♙</span></article>
+          <article class="summary-card"><span class="summary-label">Quotes</span><strong class="summary-value" id="business-quote-count">0</strong><span class="summary-hint">Drafted or sent</span><span class="summary-icon icon-amber" aria-hidden="true">✎</span></article>
+          <article class="summary-card"><span class="summary-label">Invoices</span><strong class="summary-value" id="business-invoice-count">0</strong><span class="summary-hint">Drafted, sent, and paid</span><span class="summary-icon icon-violet" aria-hidden="true">↗</span></article>
+        </div>
+        <div class="analytics-grid">
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Invoice activity</h2><p class="muted">Invoice totals by status.</p></div></div><div id="business-status-chart" class="status-chart"></div></section>
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Recent activity</h2><p class="muted">Recently issued quotes and invoices.</p></div></div><div id="business-activity" class="activity-list"></div></section>
+        </div>
+        <section class="panel invoice-panel">
+          <div class="panel-heading"><div><h2>Business documents</h2><p class="muted">Quotes and invoices for this business.</p></div><label class="search-box" for="business-search"><span aria-hidden="true">⌕</span><input id="business-search" type="search" placeholder="Search documents..." autocomplete="off"></label></div>
+          <div class="table-scroll"><table><thead><tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody id="business-document-rows"></tbody></table></div>
+          <div class="empty-state" id="business-documents-empty" hidden><span class="empty-icon" aria-hidden="true">▤</span><h3>No documents yet</h3><p>Create a quote or invoice for this business to get started.</p><button class="button button-primary" id="business-empty-new" type="button">Create a document <span aria-hidden="true">→</span></button></div>
+        </section>
+        <p class="page-footnote">Your business data is securely synced to your account.</p>
+      </section>
+
+      <section id="clients-view" class="page-wrap" hidden>
+        <div class="page-heading">
+          <div><span class="eyebrow">CLIENT DIRECTORY</span><h1>Clients</h1><p class="muted">Save client details once and reuse them on every document.</p></div>
+          <button class="button button-primary" id="show-client-form" type="button"><span class="button-plus" aria-hidden="true">+</span> Add client</button>
+        </div>
+        <p class="form-message" id="clients-message" role="status" aria-live="polite"></p>
+        <div class="summary-grid summary-grid-two"><article class="summary-card"><span class="summary-label">Total clients</span><strong class="summary-value" id="clients-total">0</strong><span class="summary-hint">Across your businesses</span><span class="summary-icon icon-green" aria-hidden="true">♙</span></article><article class="summary-card"><span class="summary-label">Businesses represented</span><strong class="summary-value" id="clients-business-count">0</strong><span class="summary-hint">With saved client contacts</span><span class="summary-icon icon-violet" aria-hidden="true">⌂</span></article></div>
+        <section class="panel client-form-panel" id="client-form-panel" hidden>
+          <div class="panel-heading"><div><h2 id="client-form-title">Add a client</h2><p class="muted">Client details are kept private to this business.</p></div><button class="row-action" id="cancel-client-form" type="button">Cancel</button></div>
+          <form id="client-form" class="client-form-grid">
+            <input id="client-edit-id" type="hidden">
+            <div class="form-field"><label for="saved-client-business">Business</label><select id="saved-client-business" required></select></div>
+            <div class="form-field"><label for="saved-client-name">Client or company name</label><input id="saved-client-name" maxlength="160" required></div>
+            <div class="form-field"><label for="saved-client-email">Email address <span class="optional">OPTIONAL</span></label><input id="saved-client-email" type="email" maxlength="254"></div>
+            <div class="form-field"><label for="saved-client-phone">Phone <span class="optional">OPTIONAL</span></label><input id="saved-client-phone" maxlength="60"></div>
+            <div class="form-field field-full"><label for="saved-client-address">Billing address <span class="optional">OPTIONAL</span></label><textarea id="saved-client-address" rows="3" maxlength="1000"></textarea></div>
+            <div class="client-form-actions field-full"><button class="button button-secondary" id="cancel-client" type="button">Cancel</button><button class="button button-primary" id="save-client" type="submit">Save client</button></div>
+          </form>
+        </section>
+        <section class="panel invoice-panel">
+          <div class="panel-heading"><div><h2>Saved clients</h2><p class="muted">Your client relationships across all businesses.</p></div><label class="search-box" for="client-search"><span aria-hidden="true">⌕</span><input id="client-search" type="search" placeholder="Search clients..." autocomplete="off"></label></div>
+          <div id="client-card-grid" class="client-card-grid"></div>
+          <div class="empty-state" id="clients-empty" hidden><span class="empty-icon" aria-hidden="true">♙</span><h3>Your client directory is ready</h3><p>Save a client here and their contact details will be ready to use on quotes and invoices.</p><button class="button button-primary" id="clients-empty-add" type="button">Add a client <span aria-hidden="true">→</span></button></div>
+        </section>
+      </section>
+
+      <section id="business-form-view" class="page-wrap editor-wrap" hidden>
+        <div class="page-heading editor-heading"><div><button class="back-link" id="cancel-business-form-top" type="button"><span aria-hidden="true">←</span> Back to overview</button><span class="eyebrow" id="business-form-eyebrow">BUSINESS PROFILE</span><h1 id="business-form-heading">Create a business</h1></div><div class="editor-actions"><button class="button button-secondary" id="cancel-business-form" type="button">Cancel</button><button class="button button-primary" id="save-business" type="submit" form="business-form">Save business <span aria-hidden="true">→</span></button></div></div>
+        <p class="form-message" id="business-form-message" role="status" aria-live="polite"></p>
+        <form id="business-form" class="panel form-panel business-form">
+          <input id="business-edit-id" type="hidden">
+          <div class="section-title"><span class="section-number">01</span><div><h2>Business details</h2><p class="muted">These details appear on your quotes and invoices.</p></div></div>
+          <div class="form-grid form-grid-two">
+            <div class="form-field"><label for="profile-business-name">Business name</label><input id="profile-business-name" maxlength="160" required></div>
+            <div class="form-field"><label for="profile-business-email">Business email <span class="optional">OPTIONAL</span></label><input id="profile-business-email" type="email" maxlength="254"></div>
+            <div class="form-field field-full"><label for="profile-business-address">Business address <span class="optional">OPTIONAL</span></label><textarea id="profile-business-address" rows="3" maxlength="1000"></textarea></div>
+          </div>
+          <div class="logo-upload">
+            <div><span class="field-label">Business logo</span><p class="muted">PNG, JPEG, WebP, or SVG. Maximum file size: 2 MB.</p></div>
+            <div class="logo-upload-control"><img id="business-logo-preview" alt="Business logo preview" hidden><span id="business-logo-placeholder" class="business-logo-fallback">M</span><label class="button button-secondary" for="business-logo-file">Choose logo</label><input id="business-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"></div>
+          </div>
+        </form>
+      </section>
+
+      <section id="dashboard-view" class="page-wrap">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">YOUR WORKSPACE</span>
+            <h1>Documents</h1>
+            <p class="muted">Quotes and invoices for the selected business.</p>
+          </div>
+            <button class="button button-primary" id="new-invoice" type="button"><span class="button-plus" aria-hidden="true">+</span> New document</button>
+        </div>
+        <p class="form-message" id="dashboard-message" role="status" aria-live="polite"></p>
+
+        <div class="summary-grid">
+          <article class="summary-card">
+            <span class="summary-label">Documents</span>
+            <strong class="summary-value" id="stat-total">—</strong>
+            <span class="summary-hint">Quotes and invoices</span>
+            <span class="summary-icon icon-violet" aria-hidden="true">↗</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Awaiting payment</span>
+            <strong class="summary-value" id="stat-awaiting">—</strong>
+            <span class="summary-hint">Sent and outstanding</span>
+            <span class="summary-icon icon-amber" aria-hidden="true">◷</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Paid</span>
+            <strong class="summary-value" id="stat-paid">—</strong>
+            <span class="summary-hint">Marked as paid</span>
+            <span class="summary-icon icon-green" aria-hidden="true">✓</span>
+          </article>
+        </div>
+
+        <section class="panel invoice-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>All documents</h2>
+              <p class="muted">Quotes and invoices for this business.</p>
+            </div>
+            <label class="search-box" for="invoice-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="invoice-search" type="search" placeholder="Search documents..." autocomplete="off">
+            </label>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
+              </thead>
+              <tbody id="invoice-rows"></tbody>
+            </table>
+          </div>
+          <div class="empty-state" id="empty-state" hidden>
+            <span class="empty-icon" aria-hidden="true">▤</span>
+            <h3 id="empty-title">Your first document starts here</h3>
+            <p id="empty-description">Create a quote or invoice to manage from any device.</p>
+            <button class="button button-primary" id="empty-new-invoice" type="button">Create a document <span aria-hidden="true">→</span></button>
+          </div>
+        </section>
+        <p class="page-footnote">Your data is securely synced to your account.</p>
+      </section>
+
+      <section id="editor-view" class="page-wrap editor-wrap" hidden>
+        <div class="page-heading editor-heading">
+          <div>
+            <button class="back-link" id="back-to-dashboard" type="button"><span aria-hidden="true">←</span> All documents</button>
+              <span class="eyebrow" id="editor-eyebrow">NEW DOCUMENT</span>
+              <h1 id="editor-title">Create a document</h1>
+          </div>
+          <div class="editor-actions">
+            <button class="button button-secondary" id="cancel-edit" type="button">Cancel</button>
+            <button class="button button-primary" id="save-invoice" type="button">Save invoice <span aria-hidden="true">→</span></button>
+          </div>
+        </div>
+        <p class="form-message" id="editor-message" role="status" aria-live="polite"></p>
+        <form id="invoice-form" class="editor-grid">
+          <div class="editor-main">
+            <section class="panel form-panel">
+              <div class="section-title"><span class="section-number">01</span><div><h2>Invoice details</h2><p class="muted">Set the dates and status for this invoice.</p></div></div>
+              <div class="form-grid form-grid-three">
+                <div class="form-field"><label for="invoice-type">Document type</label><select id="invoice-type" name="document_type"><option value="invoice">Invoice</option><option value="quote">Quote</option></select></div>
+                <div class="form-field"><label for="invoice-number">Document number</label><input id="invoice-number" name="invoice_number" maxlength="40" required></div>
+                <div class="form-field"><label for="issue-date">Issue date</label><input id="issue-date" name="issue_date" type="date" required></div>
+                <div class="form-field"><label for="due-date"><span id="due-date-label">Due date</span></label><input id="due-date" name="due_date" type="date" required></div>
+              </div>
+            </section>
+
+            <section class="panel form-panel">
+              <div class="section-title"><span class="section-number">03</span><div><h2>Client information</h2><p class="muted">Who are you billing?</p></div></div>
+              <div class="form-grid form-grid-two">
+                <div class="form-field field-full"><label for="client-picker">Saved client <span class="optional">OPTIONAL</span></label><select id="client-picker"><option value="">Enter client details manually</option></select></div>
+                <div class="form-field"><label for="client-name">Client or company name</label><input id="client-name" name="client_name" placeholder="e.g. Acme Studio" maxlength="160" required></div>
+                <div class="form-field"><label for="client-email">Email address <span class="optional">OPTIONAL</span></label><input id="client-email" name="client_email" type="email" placeholder="accounts@client.com" maxlength="254"></div>
+                <div class="form-field field-full"><label for="client-address">Billing address <span class="optional">OPTIONAL</span></label><textarea id="client-address" name="client_address" rows="3" maxlength="1000" placeholder="Street address, city, postal code"></textarea></div>
+              </div>
+              <label class="save-client-inline"><input id="save-client-from-document" type="checkbox"> Save this client to the business directory</label>
+            </section>
+
+            <section class="panel form-panel">
+              <div class="section-title"><span class="section-number">04</span><div><h2>Line items</h2><p class="muted">Add the products or services on this invoice.</p></div></div>
+              <div class="line-header"><span>DESCRIPTION</span><span>QTY</span><span>UNIT PRICE</span><span>AMOUNT</span><span></span></div>
+              <div id="line-items"></div>
+              <button class="add-line-button" id="add-line" type="button"><span aria-hidden="true">+</span> Add a line item</button>
+              <div class="totals-box">
+                <div class="currency-row"><label for="currency">Currency</label><input id="currency" name="currency" value="ZAR" maxlength="3" pattern="[A-Za-z]{3}" title="Enter a 3-letter currency code, such as ZAR or USD" required></div>
+                <div class="total-row"><span>Subtotal</span><strong id="subtotal-value">R 0.00</strong></div>
+                <div class="discount-controls"><label for="discount-type">Discount</label><select id="discount-type" name="discount_type"><option value="amount">Amount</option><option value="percent">Percentage</option></select><input id="discount-value" name="discount_value" type="number" step="0.01" value="0" aria-label="Discount value"><span id="discount-suffix">ZAR</span></div>
+                <div class="total-row"><span id="discount-label">Discount</span><strong id="discount-amount-value">− R 0.00</strong></div>
+                <div class="total-row tax-row"><label for="tax-rate">Tax rate (%)</label><input id="tax-rate" name="tax_rate" type="number" min="0" max="100" step="0.01" value="0"><strong id="tax-value">R 0.00</strong></div>
+                <div class="total-row grand-total"><span>Total due</span><strong id="total-value">R 0.00</strong></div>
+              </div>
+            </section>
+
+            <section class="panel form-panel">
+              <div class="section-title"><span class="section-number">05</span><div><h2>Notes</h2><p class="muted">Add a thank-you or payment instructions.</p></div></div>
+              <div class="form-field"><label for="invoice-notes">Message to your client <span class="optional">OPTIONAL</span></label><textarea id="invoice-notes" name="notes" rows="4" maxlength="3000" placeholder="Thank you for your business."></textarea></div>
+            </section>
+          </div>
+          <aside class="editor-aside">
+            <section class="panel form-panel">
+              <h2>Document status</h2>
+              <p class="muted">Update this as the document moves along.</p>
+              <div class="form-field"><label for="invoice-status">Status</label><select id="invoice-status" name="status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="paid">Paid</option></select></div>
+            </section>
+            <div class="tip-card"><span class="tip-spark" aria-hidden="true">✳</span><strong>Ready when you are</strong><p>Save your quote or invoice securely, then print or save a PDF to share it with your client.</p></div>
+          </aside>
+        </form>
+        <div class="mobile-save-bar"><button class="button button-secondary" id="mobile-cancel" type="button">Cancel</button><button class="button button-primary" id="mobile-save" type="button">Save document <span aria-hidden="true">→</span></button></div>
+      </section>
+
+      <section id="print-view" aria-label="Printable invoice"></section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
