@@ -167,7 +167,7 @@ create policy "Users can delete clients in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
-    and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
+    and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
 drop policy if exists "Users can view invoices in their businesses" on public.invoices;
