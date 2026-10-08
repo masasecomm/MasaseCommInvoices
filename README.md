@@ -12,7 +12,7 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 - Apply discounts as a percentage or fixed amount. A negative discount amount is treated as a surcharge.
 - Calculate totals and print or save quotes and invoices as PDFs.
 - Email a saved quote or invoice PDF directly to the client's email address.
-- Keep each account's invoices private with Supabase authentication and row-level security.
+- Restrict sign-in and database access to the authorized Masase Commerce account, with Supabase authentication and row-level security.
 
 The default currency is ZAR. Change the currency code on each invoice when needed.
 
@@ -32,9 +32,11 @@ The default currency is ZAR. Change the currency code on each invoice when neede
 
 5. In Supabase Authentication settings, configure the site URL and allowed redirect URLs to include your GitHub Pages URL (for example, `https://your-user.github.io/your-repository/`). For a custom domain, add that URL too.
 6. Set the repository's default branch to `main` and push the app. In GitHub, open **Settings → Pages** and select **GitHub Actions** as the build and deployment source. The workflow in `.github/workflows/deploy.yml` deploys the site on every push to `main`.
-7. Open the Pages URL and create an account, then create your first business. If email confirmation is enabled in Supabase, confirm your email before signing in.
+7. In Supabase **Authentication → Users**, create or invite `masasecomm@gmail.com` and set its password privately in the dashboard. In **Authentication → Providers → User Signups**, disable new-user signups. Then open the Pages URL and sign in with that account.
 
 Because GitHub Pages is static hosting, the Supabase URL and publishable/anon key in `config.js` are visible to site visitors. This is expected: authentication and row-level security—not hiding the public key—protect invoice data.
+
+The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor to apply the account restriction. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
 
 ## Set up customer email
 

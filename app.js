@@ -31,6 +31,7 @@ const LOGO_BUCKET = "business-logos";
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 const CLIENT_FIELD_IDS = ["saved-client-name", "saved-client-email", "saved-client-phone", "saved-client-address"];
+const ALLOWED_ACCOUNT_EMAIL = "masasecomm@gmail.com";
 
 let supabase;
 let currentUser;
@@ -42,7 +43,6 @@ let activeView = "overview";
 let editingId = null;
 let editingBusinessId = null;
 let pendingLogoFile = null;
-let isCreatingAccount = false;
 
 function isConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -160,6 +160,22 @@ function setAuthenticated(user) {
     updateBusinessSwitcher();
     renderAll();
   }
+}
+
+async function applyAuthSession(session) {
+  const user = session?.user || null;
+  if (user && user.email?.toLowerCase() !== ALLOWED_ACCOUNT_EMAIL) {
+    const { error } = await supabase.auth.signOut();
+    setAuthenticated(null);
+    showMessage(
+      authMessage,
+      error
+        ? `This app is restricted to ${ALLOWED_ACCOUNT_EMAIL}. Sign-out also failed: ${error.message}`
+        : `This app is restricted to ${ALLOWED_ACCOUNT_EMAIL}.`,
+    );
+    return;
+  }
+  setAuthenticated(user);
 }
 
 async function loadWorkspace() {
@@ -1027,33 +1043,17 @@ async function handleAuth(event) {
   showMessage(authMessage, "");
   try {
     const email = $("#auth-email").value.trim();
-    const password = $("#auth-password").value;
-    const result = isCreatingAccount
-      ? await supabase.auth.signUp({ email, password })
-      : await supabase.auth.signInWithPassword({ email, password });
-    if (result.error) throw result.error;
-    if (isCreatingAccount && !result.data.session) {
-      showMessage(authMessage, "Account created. Check your email to confirm your address, then sign in.", true);
-    } else if (isCreatingAccount) {
-      showMessage(authMessage, "Account created. Create your first business to get started.", true);
+    if (email.toLowerCase() !== ALLOWED_ACCOUNT_EMAIL) {
+      throw new Error(`Only ${ALLOWED_ACCOUNT_EMAIL} can sign in to this app.`);
     }
+    const password = $("#auth-password").value;
+    const result = await supabase.auth.signInWithPassword({ email, password });
+    if (result.error) throw result.error;
   } catch (error) {
     showMessage(authMessage, error.message || "Could not complete sign-in.");
   } finally {
     button.disabled = false;
   }
-}
-
-function toggleAuthMode() {
-  isCreatingAccount = !isCreatingAccount;
-  $("#auth-eyebrow").textContent = isCreatingAccount ? "GET STARTED" : "WELCOME BACK";
-  $("#auth-heading").textContent = isCreatingAccount ? "Create your account" : "Sign in to your account";
-  $("#auth-description").textContent = isCreatingAccount ? "Your invoices, ready whenever you are." : "Your business is right where you left it.";
-  $("#auth-password").autocomplete = isCreatingAccount ? "new-password" : "current-password";
-  $("#auth-submit").innerHTML = isCreatingAccount ? 'Create account <span aria-hidden="true">→</span>' : 'Sign in <span aria-hidden="true">→</span>';
-  $("#auth-switch-label").textContent = isCreatingAccount ? "Already have an account?" : "New to Masase?";
-  $("#auth-toggle").textContent = isCreatingAccount ? "Sign in" : "Create an account";
-  showMessage(authMessage, "");
 }
 
 function startNewDocument(type = "invoice") {
@@ -1066,7 +1066,6 @@ function startNewDocument(type = "invoice") {
 }
 
 authForm.addEventListener("submit", handleAuth);
-$("#auth-toggle").addEventListener("click", toggleAuthMode);
 $("#nav-overview").addEventListener("click", () => setView("overview"));
 $("#nav-business").addEventListener("click", () => {
   if (!currentBusiness()) setView("overview");
@@ -1177,10 +1176,10 @@ if (!isConfigured()) {
 } else {
   supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   supabase.auth.onAuthStateChange((_event, session) => {
-    window.setTimeout(() => setAuthenticated(session?.user || null), 0);
+    window.setTimeout(() => { applyAuthSession(session); }, 0);
   });
   supabase.auth.getSession().then(({ data, error }) => {
     if (error) showMessage(authMessage, `Could not restore your session: ${error.message}`);
-    setAuthenticated(data?.session?.user || null);
+    applyAuthSession(data?.session || null);
   });
 }

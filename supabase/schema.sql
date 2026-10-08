@@ -105,30 +105,42 @@ alter table public.businesses enable row level security;
 alter table public.clients enable row level security;
 alter table public.invoices enable row level security;
 
+create or replace function public.is_masasecomm_invoice_user()
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select lower(coalesce(auth.jwt() ->> 'email', '')) = 'masasecomm@gmail.com';
+$$;
+
+revoke all on function public.is_masasecomm_invoice_user() from public;
+grant execute on function public.is_masasecomm_invoice_user() to authenticated;
+
 drop policy if exists "Users can view their own businesses" on public.businesses;
 create policy "Users can view their own businesses"
   on public.businesses for select
   to authenticated
-  using ((select auth.uid()) = user_id);
+  using ((select auth.uid()) = user_id and (select public.is_masasecomm_invoice_user()));
 
 drop policy if exists "Users can create their own businesses" on public.businesses;
 create policy "Users can create their own businesses"
   on public.businesses for insert
   to authenticated
-  with check ((select auth.uid()) = user_id);
+  with check ((select auth.uid()) = user_id and (select public.is_masasecomm_invoice_user()));
 
 drop policy if exists "Users can update their own businesses" on public.businesses;
 create policy "Users can update their own businesses"
   on public.businesses for update
   to authenticated
-  using ((select auth.uid()) = user_id)
-  with check ((select auth.uid()) = user_id);
+  using ((select auth.uid()) = user_id and (select public.is_masasecomm_invoice_user()))
+  with check ((select auth.uid()) = user_id and (select public.is_masasecomm_invoice_user()));
 
 drop policy if exists "Users can delete their own businesses" on public.businesses;
 create policy "Users can delete their own businesses"
   on public.businesses for delete
   to authenticated
-  using ((select auth.uid()) = user_id);
+  using ((select auth.uid()) = user_id and (select public.is_masasecomm_invoice_user()));
 
 drop policy if exists "Users can view clients in their businesses" on public.clients;
 create policy "Users can view clients in their businesses"
@@ -136,6 +148,7 @@ create policy "Users can view clients in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
@@ -145,6 +158,7 @@ create policy "Users can create clients in their businesses"
   to authenticated
   with check (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
@@ -154,10 +168,12 @@ create policy "Users can update clients in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   )
   with check (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
@@ -167,6 +183,7 @@ create policy "Users can delete clients in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
@@ -177,6 +194,7 @@ create policy "Users can view invoices in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = business_id and b.user_id = (select auth.uid()))
   );
 
@@ -187,6 +205,7 @@ create policy "Users can create invoices in their businesses"
   to authenticated
   with check (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
     and (client_id is null or exists (select 1 from public.clients c where c.id = public.invoices.client_id and c.business_id = public.invoices.business_id and c.user_id = (select auth.uid())))
   );
@@ -198,10 +217,12 @@ create policy "Users can update invoices in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
   )
   with check (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
     and (client_id is null or exists (select 1 from public.clients c where c.id = public.invoices.client_id and c.business_id = public.invoices.business_id and c.user_id = (select auth.uid())))
   );
@@ -213,6 +234,7 @@ create policy "Users can delete invoices in their businesses"
   to authenticated
   using (
     (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
   );
 
@@ -261,6 +283,7 @@ create policy "Users can upload their own business logos"
   to authenticated
   with check (
     bucket_id = 'business-logos'
+    and (select public.is_masasecomm_invoice_user())
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
@@ -270,10 +293,12 @@ create policy "Users can update their own business logos"
   to authenticated
   using (
     bucket_id = 'business-logos'
+    and (select public.is_masasecomm_invoice_user())
     and (storage.foldername(name))[1] = (select auth.uid())::text
   )
   with check (
     bucket_id = 'business-logos'
+    and (select public.is_masasecomm_invoice_user())
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
@@ -283,5 +308,6 @@ create policy "Users can delete their own business logos"
   to authenticated
   using (
     bucket_id = 'business-logos'
+    and (select public.is_masasecomm_invoice_user())
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
