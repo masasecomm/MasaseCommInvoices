@@ -6,11 +6,13 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 
 - Manage multiple businesses, including business contact details and an uploaded logo.
 - View an all-business dashboard and individual business dashboards with client and document visualizations.
-- Save, search, and reuse client contact details within each business.
+- Automatically save and reuse client details within each business.
 - Create, edit, search, print, and delete quotes and invoices; convert a quote to an invoice.
+- Automatically save complete document drafts and notes as you edit them.
+- Automatically remember line-item products and prices in the business catalogue for reuse.
 - Add line items, tax, currency, status, dates, and notes.
 - Apply discounts as a percentage or fixed amount. A negative discount amount is treated as a surcharge.
-- Calculate totals and print or save quotes and invoices as PDFs.
+- Calculate totals and directly download quotes and invoices as PDFs, or print them.
 - Email a saved quote or invoice PDF directly to the client's email address.
 - Restrict sign-in and database access to the authorized Masase Commerce account, with Supabase authentication and row-level security.
 
@@ -19,7 +21,7 @@ The default currency is ZAR. Change the currency code on each invoice when neede
 ## Set up cloud storage
 
 1. Create a Supabase project.
-2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client, document, and logo-storage policies. If you already set up the earlier invoice-only version, this script also adds the new columns and creates a business profile for existing invoices.
+2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client, product catalogue, document, and logo-storage policies. If you already have this app set up, rerun the full script to add the product catalogue and the latest security policies; it preserves existing records.
 3. In Supabase project settings, copy the Project URL and the publishable key (or legacy `anon` key).
 4. Add those values to [`config.js`](./config.js):
 
@@ -36,7 +38,7 @@ The default currency is ZAR. Change the currency code on each invoice when neede
 
 Because GitHub Pages is static hosting, the Supabase URL and publishable/anon key in `config.js` are visible to site visitors. This is expected: authentication and row-level security—not hiding the public key—protect invoice data.
 
-The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor to apply the account restriction. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
+The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor so product storage and the latest policies are applied. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
 
 ## Set up customer email
 

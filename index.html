@@ -239,37 +239,39 @@
           </div>
           <div class="editor-actions">
             <button class="button button-secondary" id="cancel-edit" type="button">Cancel</button>
-            <button class="button button-primary" id="save-invoice" type="button">Save invoice <span aria-hidden="true">→</span></button>
+            <button class="button button-secondary" id="download-editor-pdf" type="button">Download PDF</button>
+            <button class="button button-primary" id="save-invoice" type="button">Save document <span aria-hidden="true">→</span></button>
           </div>
         </div>
         <p class="form-message" id="editor-message" role="status" aria-live="polite"></p>
         <form id="invoice-form" class="editor-grid">
           <div class="editor-main">
             <section class="panel form-panel">
-              <div class="section-title"><span class="section-number">01</span><div><h2>Invoice details</h2><p class="muted">Set the dates and status for this invoice.</p></div></div>
+              <div class="section-title"><span class="section-number">01</span><div><h2>Document details</h2><p class="muted">Choose a type, number, dates, and status.</p></div></div>
               <div class="form-grid form-grid-three">
                 <div class="form-field"><label for="invoice-type">Document type</label><select id="invoice-type" name="document_type"><option value="invoice">Invoice</option><option value="quote">Quote</option></select></div>
                 <div class="form-field"><label for="invoice-number">Document number</label><input id="invoice-number" name="invoice_number" maxlength="40" required></div>
                 <div class="form-field"><label for="issue-date">Issue date</label><input id="issue-date" name="issue_date" type="date" required></div>
                 <div class="form-field"><label for="due-date"><span id="due-date-label">Due date</span></label><input id="due-date" name="due_date" type="date" required></div>
+                <div class="form-field"><label for="invoice-status">Status</label><select id="invoice-status" name="status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="paid">Paid</option></select></div>
               </div>
             </section>
 
             <section class="panel form-panel">
-              <div class="section-title"><span class="section-number">03</span><div><h2>Client information</h2><p class="muted">Who are you billing?</p></div></div>
+              <div class="section-title"><span class="section-number">02</span><div><h2>Bill to</h2><p class="muted">Client details are saved to this business automatically.</p></div></div>
               <div class="form-grid form-grid-two">
-                <div class="form-field field-full"><label for="client-picker">Saved client <span class="optional">OPTIONAL</span></label><select id="client-picker"><option value="">Enter client details manually</option></select></div>
+                <div class="form-field field-full"><label for="client-picker">Choose a saved client <span class="optional">OPTIONAL</span></label><select id="client-picker"><option value="">Enter client details manually</option></select></div>
                 <div class="form-field"><label for="client-name">Client or company name</label><input id="client-name" name="client_name" placeholder="e.g. Acme Studio" maxlength="160" required></div>
                 <div class="form-field"><label for="client-email">Email address <span class="optional">OPTIONAL</span></label><input id="client-email" name="client_email" type="email" placeholder="accounts@client.com" maxlength="254"></div>
                 <div class="form-field field-full"><label for="client-address">Billing address <span class="optional">OPTIONAL</span></label><textarea id="client-address" name="client_address" rows="3" maxlength="1000" placeholder="Street address, city, postal code"></textarea></div>
               </div>
-              <label class="save-client-inline"><input id="save-client-from-document" type="checkbox"> Save this client to the business directory</label>
             </section>
 
             <section class="panel form-panel">
-              <div class="section-title"><span class="section-number">04</span><div><h2>Line items</h2><p class="muted">Add the products or services on this invoice.</p></div></div>
+              <div class="section-title"><span class="section-number">03</span><div><h2>Items</h2><p class="muted">Products and prices are remembered for this business.</p></div></div>
               <div class="line-header"><span>DESCRIPTION</span><span>QTY</span><span>UNIT PRICE</span><span>AMOUNT</span><span></span></div>
               <div id="line-items"></div>
+              <datalist id="product-options"></datalist>
               <button class="add-line-button" id="add-line" type="button"><span aria-hidden="true">+</span> Add a line item</button>
               <div class="totals-box">
                 <div class="currency-row"><label for="currency">Currency</label><input id="currency" name="currency" value="ZAR" maxlength="3" pattern="[A-Za-z]{3}" title="Enter a 3-letter currency code, such as ZAR or USD" required></div>
@@ -282,20 +284,35 @@
             </section>
 
             <section class="panel form-panel">
-              <div class="section-title"><span class="section-number">05</span><div><h2>Notes</h2><p class="muted">Add a thank-you or payment instructions.</p></div></div>
+              <div class="section-title"><span class="section-number">04</span><div><h2>Notes</h2><p class="muted">Changes are saved automatically with this document.</p></div></div>
               <div class="form-field"><label for="invoice-notes">Message to your client <span class="optional">OPTIONAL</span></label><textarea id="invoice-notes" name="notes" rows="4" maxlength="3000" placeholder="Thank you for your business."></textarea></div>
             </section>
           </div>
           <aside class="editor-aside">
-            <section class="panel form-panel">
-              <h2>Document status</h2>
-              <p class="muted">Update this as the document moves along.</p>
-              <div class="form-field"><label for="invoice-status">Status</label><select id="invoice-status" name="status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="paid">Paid</option></select></div>
+            <section class="panel live-preview-panel" aria-label="Live document preview">
+              <div class="preview-heading"><span>LIVE PREVIEW</span><span id="editor-save-status" role="status" aria-live="polite">Draft not saved</span></div>
+              <article class="invoice-preview">
+                <div class="preview-brand" id="preview-business-name">Your business</div>
+                <div class="preview-rule"></div>
+                <div class="preview-title-row"><div><span id="preview-document-type">INVOICE</span><strong id="preview-document-number">INV-001</strong></div><h2 id="preview-total">R 0.00</h2></div>
+                <div class="preview-parties">
+                  <div><span>FROM</span><strong id="preview-from-name">Your business</strong><p id="preview-from-contact"></p></div>
+                  <div><span>BILL TO</span><strong id="preview-client-name">Client name</strong><p id="preview-client-contact"></p></div>
+                </div>
+                <div class="preview-dates">
+                  <div><span>ISSUED</span><strong id="preview-issue-date">—</strong></div>
+                  <div><span id="preview-due-label">DUE DATE</span><strong id="preview-due-date">—</strong></div>
+                </div>
+                <div class="preview-items-heading"><span>ITEM</span><span>AMOUNT</span></div>
+                <div id="preview-items"></div>
+                <div class="preview-summary" id="preview-summary"></div>
+                <p class="preview-notes" id="preview-notes"></p>
+              </article>
+              <button class="button button-secondary preview-download" id="preview-download-pdf" type="button">Download PDF</button>
             </section>
-            <div class="tip-card"><span class="tip-spark" aria-hidden="true">✳</span><strong>Ready when you are</strong><p>Save your quote or invoice securely, then print or save a PDF to share it with your client.</p></div>
           </aside>
         </form>
-        <div class="mobile-save-bar"><button class="button button-secondary" id="mobile-cancel" type="button">Cancel</button><button class="button button-primary" id="mobile-save" type="button">Save document <span aria-hidden="true">→</span></button></div>
+        <div class="mobile-save-bar"><button class="button button-secondary" id="mobile-cancel" type="button">Cancel</button><button class="button button-secondary" id="mobile-download-pdf" type="button">PDF</button><button class="button button-primary" id="mobile-save" type="button">Save document <span aria-hidden="true">→</span></button></div>
       </section>
 
       <section id="print-view" aria-label="Printable invoice"></section>

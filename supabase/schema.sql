@@ -26,6 +26,21 @@ create table if not exists public.clients (
 create index if not exists clients_user_business_name_idx
   on public.clients (user_id, business_id, name);
 
+create table if not exists public.products (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  business_id uuid not null references public.businesses (id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 240),
+  unit_price numeric(12, 2) not null check (unit_price >= 0),
+  currency text not null check (currency ~ '^[A-Z]{3}$'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint products_user_business_name_currency_key unique (user_id, business_id, name, currency)
+);
+
+create index if not exists products_user_business_name_idx
+  on public.products (user_id, business_id, name);
+
 create table if not exists public.invoices (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
@@ -103,6 +118,7 @@ create index if not exists invoices_business_created_at_idx
 
 alter table public.businesses enable row level security;
 alter table public.clients enable row level security;
+alter table public.products enable row level security;
 alter table public.invoices enable row level security;
 
 create or replace function public.is_masasecomm_invoice_user()
@@ -187,6 +203,51 @@ create policy "Users can delete clients in their businesses"
     and exists (select 1 from public.businesses b where b.id = public.clients.business_id and b.user_id = (select auth.uid()))
   );
 
+drop policy if exists "Users can view products in their businesses" on public.products;
+create policy "Users can view products in their businesses"
+  on public.products for select
+  to authenticated
+  using (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (select 1 from public.businesses b where b.id = public.products.business_id and b.user_id = (select auth.uid()))
+  );
+
+drop policy if exists "Users can create products in their businesses" on public.products;
+create policy "Users can create products in their businesses"
+  on public.products for insert
+  to authenticated
+  with check (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (select 1 from public.businesses b where b.id = public.products.business_id and b.user_id = (select auth.uid()))
+  );
+
+drop policy if exists "Users can update products in their businesses" on public.products;
+create policy "Users can update products in their businesses"
+  on public.products for update
+  to authenticated
+  using (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (select 1 from public.businesses b where b.id = public.products.business_id and b.user_id = (select auth.uid()))
+  )
+  with check (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (select 1 from public.businesses b where b.id = public.products.business_id and b.user_id = (select auth.uid()))
+  );
+
+drop policy if exists "Users can delete products in their businesses" on public.products;
+create policy "Users can delete products in their businesses"
+  on public.products for delete
+  to authenticated
+  using (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (select 1 from public.businesses b where b.id = public.products.business_id and b.user_id = (select auth.uid()))
+  );
+
 drop policy if exists "Users can view invoices in their businesses" on public.invoices;
 drop policy if exists "Users can view their own invoices" on public.invoices;
 create policy "Users can view invoices in their businesses"
@@ -257,6 +318,11 @@ create trigger set_business_updated_at
 drop trigger if exists set_client_updated_at on public.clients;
 create trigger set_client_updated_at
   before update on public.clients
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_product_updated_at on public.products;
+create trigger set_product_updated_at
+  before update on public.products
   for each row execute function public.set_updated_at();
 
 drop trigger if exists set_invoice_updated_at on public.invoices;

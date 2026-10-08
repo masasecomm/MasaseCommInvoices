@@ -37,12 +37,18 @@ let supabase;
 let currentUser;
 let businesses = [];
 let clients = [];
+let products = [];
 let invoices = [];
 let selectedBusinessId = null;
 let activeView = "overview";
 let editingId = null;
 let editingBusinessId = null;
 let pendingLogoFile = null;
+let autosaveTimer = null;
+let autosaveInProgress = false;
+let autosaveQueued = false;
+let suppressAutosave = false;
+let editorGeneration = 0;
 
 function isConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -155,6 +161,7 @@ function setAuthenticated(user) {
   } else {
     businesses = [];
     clients = [];
+    products = [];
     invoices = [];
     selectedBusinessId = null;
     updateBusinessSwitcher();
@@ -180,12 +187,13 @@ async function applyAuthSession(session) {
 
 async function loadWorkspace() {
   if (!currentUser || !supabase) return;
-  const [businessResult, clientResult, invoiceResult] = await Promise.all([
+  const [businessResult, clientResult, productResult, invoiceResult] = await Promise.all([
     supabase.from("businesses").select("*").order("created_at", { ascending: true }),
     supabase.from("clients").select("*").order("name", { ascending: true }),
+    supabase.from("products").select("*").order("name", { ascending: true }),
     supabase.from("invoices").select("*").order("created_at", { ascending: false }),
   ]);
-  const error = businessResult.error || clientResult.error || invoiceResult.error;
+  const error = businessResult.error || clientResult.error || productResult.error || invoiceResult.error;
   if (error) {
     showMessage($("#overview-message"), `Could not load workspace: ${error.message}. Apply the latest setup in supabase/schema.sql, then reload.`);
     return;
@@ -193,12 +201,14 @@ async function loadWorkspace() {
   const priorBusiness = selectedBusinessId;
   businesses = businessResult.data;
   clients = clientResult.data;
+  products = productResult.data;
   invoices = invoiceResult.data;
   selectedBusinessId = businesses.some((business) => business.id === priorBusiness)
     ? priorBusiness
     : businesses[0]?.id || null;
   updateBusinessSwitcher();
   renderAll();
+  populateProductOptions();
 }
 
 function appendText(parent, tag, className, text) {
@@ -348,7 +358,7 @@ function renderDocumentRows(container, documents) {
     const actions = document.createElement("td");
     const buttons = document.createElement("div");
     buttons.className = "row-actions";
-    const labels = [["Edit", "edit"], ["Print", "print"], ["Email PDF", "send"]];
+    const labels = [["Edit", "edit"], ["Download PDF", "pdf"], ["Print", "print"], ["Email PDF", "send"]];
     if (invoice.document_type === "quote") labels.push(["Convert", "convert"]);
     labels.push(["Delete", "delete"]);
     labels.forEach(([label, action]) => {
@@ -523,7 +533,33 @@ function selectClient(clientId) {
   $("#client-name").value = client?.name || "";
   $("#client-email").value = client?.email || "";
   $("#client-address").value = client?.address || "";
-  $("#save-client-from-document").checked = false;
+  scheduleAutosave();
+  renderEditorPreview();
+}
+
+function businessProducts(businessId = selectedBusinessId) {
+  return products.filter((product) => product.business_id === businessId);
+}
+
+function populateProductOptions() {
+  const options = $("#product-options");
+  if (!options) return;
+  options.replaceChildren();
+  businessProducts().forEach((product) => {
+    const option = document.createElement("option");
+    option.value = product.name;
+    option.label = `${product.currency} ${Number(product.unit_price).toFixed(2)}`;
+    options.append(option);
+  });
+}
+
+function applySavedProduct(descriptionInput, priceInput) {
+  const product = businessProducts().find((entry) =>
+    entry.name.toLowerCase() === descriptionInput.value.trim().toLowerCase(),
+  );
+  if (product && product.currency === $("#currency").value.trim().toUpperCase()) {
+    priceInput.value = product.unit_price;
+  }
 }
 
 function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) {
@@ -535,6 +571,7 @@ function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) 
   description.placeholder = "Service or product";
   description.maxLength = 240;
   description.value = item.description || "";
+  description.setAttribute("list", "product-options");
   description.setAttribute("aria-label", "Item description");
   const quantity = document.createElement("input");
   quantity.className = "line-input";
@@ -570,8 +607,14 @@ function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) 
       row.remove();
     }
     updateTotals();
+    scheduleAutosave();
   });
-  [description, quantity, price].forEach((input) => input.addEventListener("input", updateTotals));
+  description.addEventListener("change", () => applySavedProduct(description, price));
+  [description, quantity, price].forEach((input) => input.addEventListener("input", () => {
+    if (input === description) applySavedProduct(description, price);
+    updateTotals();
+    scheduleAutosave();
+  }));
   row.append(description, quantity, price, amount, remove);
   lineItems.append(row);
   updateTotals();
@@ -616,6 +659,62 @@ function updateTotals() {
     amount.value = currencyAmount((Number(quantity.value) || 0) * (Number(price.value) || 0), currency);
     description.setAttribute("aria-invalid", "false");
   });
+  renderEditorPreview();
+}
+
+function renderEditorPreview() {
+  const business = currentBusiness();
+  const currency = $("#currency").value.trim().toUpperCase() || "ZAR";
+  const items = formItems();
+  const amounts = calculateFormAmounts();
+  $("#preview-business-name").textContent = business?.name || "Your business";
+  $("#preview-from-name").textContent = business?.name || "Your business";
+  $("#preview-from-contact").textContent = [business?.email, business?.address].filter(Boolean).join(" · ");
+  $("#preview-client-name").textContent = $("#client-name").value.trim() || "Client name";
+  $("#preview-client-contact").textContent = [$("#client-email").value.trim(), $("#client-address").value.trim()].filter(Boolean).join(" · ");
+  $("#preview-document-type").textContent = $("#invoice-type").value.toUpperCase();
+  $("#preview-document-number").textContent = $("#invoice-number").value.trim() || "—";
+  $("#preview-issue-date").textContent = formatDate($("#issue-date").value);
+  $("#preview-due-label").textContent = $("#invoice-type").value === "quote" ? "VALID UNTIL" : "DUE DATE";
+  $("#preview-due-date").textContent = formatDate($("#due-date").value);
+  $("#preview-total").textContent = currencyAmount(amounts.total, currency);
+  $("#preview-notes").textContent = $("#invoice-notes").value.trim();
+  const previewItems = $("#preview-items");
+  previewItems.replaceChildren();
+  items.filter((item) => item.description.trim()).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "preview-item";
+    appendText(row, "span", "", `${item.description} × ${item.quantity}`);
+    appendText(row, "strong", "", currencyAmount(item.quantity * item.unit_price, currency));
+    previewItems.append(row);
+  });
+  if (!previewItems.childElementCount) appendText(previewItems, "p", "preview-empty", "Your items will appear here.");
+  const summary = $("#preview-summary");
+  summary.replaceChildren();
+  [
+    ["Subtotal", amounts.subtotal],
+    ...(amounts.discount ? [[amounts.discount < 0 ? "Surcharge" : "Discount", amounts.discount]] : []),
+    [`Tax (${$("#tax-rate").value || 0}%)`, amounts.tax],
+    ["Total", amounts.total],
+  ].forEach(([label, amount]) => {
+    const row = document.createElement("div");
+    if (label === "Total") row.className = "preview-total-row";
+    appendText(row, "span", "", label);
+    const formatted = label === "Discount"
+      ? `− ${currencyAmount(Math.abs(amount), currency)}`
+      : label === "Surcharge"
+        ? `+ ${currencyAmount(Math.abs(amount), currency)}`
+        : currencyAmount(amount, currency);
+    appendText(row, "strong", "", formatted);
+    summary.append(row);
+  });
+}
+
+function scheduleAutosave() {
+  if (suppressAutosave || activeView !== "editor") return;
+  $("#editor-save-status").textContent = "Unsaved changes";
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => saveInvoice({ automatic: true }), 900);
 }
 
 function updateTypeFields() {
@@ -629,6 +728,8 @@ function updateTypeFields() {
   $("#invoice-number").value = nextDocumentNumber(type);
   $("#save-invoice").innerHTML = `Save ${type} <span aria-hidden="true">→</span>`;
   $("#mobile-save").innerHTML = `Save ${type} <span aria-hidden="true">→</span>`;
+  renderEditorPreview();
+  scheduleAutosave();
 }
 
 function showEditor(invoice = null, type = invoice?.document_type || "invoice") {
@@ -638,6 +739,9 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
     setView("overview");
     return;
   }
+  window.clearTimeout(autosaveTimer);
+  editorGeneration += 1;
+  suppressAutosave = true;
   editingId = invoice?.id || null;
   $("#invoice-type").value = invoice?.document_type || type;
   $("#editor-eyebrow").textContent = invoice ? `EDIT ${invoice.document_type.toUpperCase()}` : `NEW ${type.toUpperCase()}`;
@@ -654,8 +758,8 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#discount-value").value = invoice?.discount_value ?? 0;
   $("#invoice-notes").value = invoice?.notes || "";
   $("#invoice-status").value = invoice?.status || "draft";
-  $("#save-client-from-document").checked = false;
   populateClientPicker(invoice?.client_id || "");
+  populateProductOptions();
   lineItems.replaceChildren();
   (invoice?.items?.length ? invoice.items : [{ description: "", quantity: 1, unit_price: 0 }]).forEach(createLineItem);
   $("#invoice-status").querySelector('option[value="paid"]').disabled = $("#invoice-type").value === "quote";
@@ -663,7 +767,9 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#save-invoice").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   $("#mobile-save").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   setView("editor");
-  $("#invoice-number").focus();
+  $("#editor-save-status").textContent = invoice ? "Saved" : "Draft not saved";
+  suppressAutosave = false;
+  updateTotals();
 }
 
 function invoiceFromForm() {
@@ -690,6 +796,7 @@ function invoiceFromForm() {
   const business = currentBusiness();
   const clientName = $("#client-name").value.trim();
   if (!invoiceNumber || !business || !clientName) throw new Error("Document number, business, and client name are required.");
+  if (!$("#client-email").checkValidity()) throw new Error("Enter a valid email address for the client.");
   const selectedClient = clients.find((client) => client.id === $("#client-picker").value);
   return {
     business_id: business.id,
@@ -715,43 +822,121 @@ function invoiceFromForm() {
 }
 
 async function findOrSaveClient(invoice) {
-  if (!$("#save-client-from-document").checked || invoice.client_id) return invoice;
   const existing = clients.find((client) =>
     client.business_id === invoice.business_id && client.name.toLowerCase() === invoice.client_name.toLowerCase(),
   );
-  if (existing) return { ...invoice, client_id: existing.id };
-  const { data, error } = await supabase.from("clients").insert({
+  const clientValues = {
     user_id: currentUser.id,
     business_id: invoice.business_id,
     name: invoice.client_name,
     email: invoice.client_email,
     address: invoice.client_address,
-  }).select().single();
+  };
+  const query = existing
+    ? supabase.from("clients").update(clientValues).eq("id", existing.id).select().single()
+    : supabase.from("clients").insert(clientValues).select().single();
+  const { data, error } = await query;
   if (error) throw new Error(`Document was not saved. Could not save client: ${error.message}`);
-  clients.push(data);
+  clients = existing
+    ? clients.map((client) => client.id === data.id ? data : client)
+    : [...clients, data];
   return { ...invoice, client_id: data.id };
 }
 
-async function saveInvoice() {
-  if (!invoiceForm.reportValidity()) return;
-  const button = $("#save-invoice");
-  const wasEditing = Boolean(editingId);
-  button.disabled = true;
-  showMessage($("#editor-message"), "");
+async function saveProducts(invoice) {
+  for (const item of invoice.items) {
+    const existing = products.find((product) =>
+      product.business_id === invoice.business_id &&
+      product.name.toLowerCase() === item.description.toLowerCase() &&
+      product.currency === invoice.currency,
+    );
+    const productValues = {
+      user_id: currentUser.id,
+      business_id: invoice.business_id,
+      name: item.description,
+      unit_price: item.unit_price,
+      currency: invoice.currency,
+    };
+    const query = existing
+      ? supabase.from("products").update(productValues).eq("id", existing.id).select().single()
+      : supabase.from("products").insert(productValues).select().single();
+    const { data, error } = await query;
+    if (error) throw new Error(`Document was not saved. Could not save product "${item.description}": ${error.message}`);
+    products = existing
+      ? products.map((product) => product.id === data.id ? data : product)
+      : [...products, data];
+  }
+  populateProductOptions();
+}
+
+async function saveInvoice({ automatic = false } = {}) {
+  if (!automatic) window.clearTimeout(autosaveTimer);
+  if (!automatic && !invoiceForm.reportValidity()) return;
+  if (autosaveInProgress) {
+    autosaveQueued = true;
+    if (!automatic) showMessage($("#editor-message"), "A save is already in progress. Your latest changes will be saved next.");
+    return;
+  }
+  let values;
   try {
-    const values = await findOrSaveClient(invoiceFromForm());
-    const query = editingId
-      ? supabase.from("invoices").update(values).eq("id", editingId).select().single()
-      : supabase.from("invoices").insert({ ...values, user_id: currentUser.id }).select().single();
-    const { error } = await query;
-    if (error) throw error;
-    await loadWorkspace();
-    setView("business");
-    showMessage($("#business-message"), wasEditing ? "Document updated." : "Document saved.", true);
+    values = invoiceFromForm();
   } catch (error) {
+    if (automatic) {
+      $("#editor-save-status").textContent = "Complete required fields to autosave";
+      return;
+    }
     showMessage($("#editor-message"), error.message || "Could not save your document.");
+    return;
+  }
+
+  const documentId = editingId;
+  const generation = editorGeneration;
+  const button = $("#save-invoice");
+  const wasEditing = Boolean(documentId);
+  autosaveInProgress = true;
+  if (!automatic) {
+    button.disabled = true;
+    showMessage($("#editor-message"), "");
+  } else {
+    $("#editor-save-status").textContent = "Saving…";
+  }
+  try {
+    const invoice = await findOrSaveClient(values);
+    await saveProducts(invoice);
+    const query = documentId
+      ? supabase.from("invoices").update(invoice).eq("id", documentId).select().single()
+      : supabase.from("invoices").insert({ ...invoice, user_id: currentUser.id }).select().single();
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!documentId && generation === editorGeneration && activeView === "editor") editingId = data.id;
+    invoices = documentId
+      ? invoices.map((entry) => entry.id === data.id ? data : entry)
+      : [data, ...invoices];
+    if (automatic && generation === editorGeneration && activeView === "editor") {
+      $("#editor-save-status").textContent = "Saved automatically";
+      showMessage($("#editor-message"), "");
+    } else if (!automatic && generation === editorGeneration && activeView === "editor") {
+      await loadWorkspace();
+      if (generation === editorGeneration && activeView === "editor") {
+        setView("business");
+        showMessage($("#business-message"), wasEditing ? "Document updated." : "Document saved.", true);
+      }
+    }
+  } catch (error) {
+    if (automatic && generation === editorGeneration && activeView === "editor") {
+      $("#editor-save-status").textContent = "Autosave failed";
+      showMessage($("#editor-message"), error.message || "Could not save your document.");
+    } else if (!automatic && generation === editorGeneration && activeView === "editor") {
+      showMessage($("#editor-message"), error.message || "Could not save your document.");
+    }
   } finally {
-    button.disabled = false;
+    autosaveInProgress = false;
+    if (!automatic && generation === editorGeneration) button.disabled = false;
+    if (autosaveQueued) {
+      autosaveQueued = false;
+      window.clearTimeout(autosaveTimer);
+      autosaveTimer = window.setTimeout(() => saveInvoice({ automatic: true }), 0);
+    }
   }
 }
 
@@ -852,6 +1037,163 @@ function renderPrint(invoice) {
   window.print();
 }
 
+function pdfSafeText(value) {
+  return String(value ?? "").normalize("NFKD").replace(/[^\x20-\x7E]/g, " ");
+}
+
+async function downloadInvoicePdf(invoice) {
+  const { PDFDocument, StandardFonts, rgb } = await import("https://esm.sh/pdf-lib@1.17.1");
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  let page = pdf.addPage([595.28, 841.89]);
+  const { width } = page.getSize();
+  const left = 52;
+  const right = width - 52;
+  let y = 785;
+  const green = rgb(0.19, 0.36, 0.27);
+
+  const draw = (text, x, top, options = {}) => {
+    const value = pdfSafeText(text);
+    page.drawText(value, {
+      x,
+      y: top - (options.size || 10),
+      size: options.size || 10,
+      font: options.bold ? bold : font,
+      color: options.color || rgb(0.16, 0.18, 0.16),
+      maxWidth: options.maxWidth,
+      lineHeight: options.lineHeight || 14,
+    });
+  };
+  const wrapLines = (text, maxWidth, size) => {
+    const lines = [];
+    let line = "";
+    pdfSafeText(text).split(/\s+/).forEach((word) => {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    });
+    if (line) lines.push(line);
+    return lines;
+  };
+  const ensureSpace = (needed = 30) => {
+    if (y - needed < 55) {
+      page = pdf.addPage([595.28, 841.89]);
+      y = 785;
+    }
+  };
+  const drawWrapped = (text, x, maxWidth, options = {}) => {
+    const size = options.size || 10;
+    const lines = wrapLines(text, maxWidth, size);
+    lines.forEach((line) => {
+      ensureSpace(size + 8);
+      draw(line, x, y, { ...options, size });
+      y -= size + 5;
+    });
+    return lines.length;
+  };
+
+  draw(invoice.issuer_name, left, y, { size: 20, bold: true, color: green });
+  draw(invoice.document_type === "quote" ? "QUOTE" : "INVOICE", right - 120, y, { size: 23, bold: true, color: green });
+  y -= 30;
+  draw(invoice.invoice_number, right - 120, y, { size: 11 });
+  y -= 18;
+  page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 2, color: green });
+  y -= 30;
+
+  draw("FROM", left, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
+  draw("BILL TO", 310, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
+  y -= 16;
+  const fromLines = [invoice.issuer_name, invoice.issuer_email, invoice.issuer_address].filter(Boolean)
+    .flatMap((entry) => wrapLines(entry, 220, 10));
+  const clientLines = [invoice.client_name, invoice.client_email, invoice.client_address].filter(Boolean)
+    .flatMap((entry) => wrapLines(entry, 220, 10));
+  const contactHeight = Math.max(fromLines.length, clientLines.length) * 14;
+  ensureSpace(contactHeight + 52);
+  const contactTop = y;
+  fromLines.forEach((line, index) => draw(line, left, contactTop - index * 14));
+  clientLines.forEach((line, index) => draw(line, 310, contactTop - index * 14));
+  y = contactTop - contactHeight - 18;
+  draw(`${invoice.document_type === "quote" ? "Valid until" : "Due date"}: ${formatDate(invoice.due_date)}`, left, y);
+  draw(`Issue date: ${formatDate(invoice.issue_date)}`, 310, y);
+  y -= 32;
+
+  const drawItemsHeader = () => {
+    page.drawRectangle({ x: left, y: y - 5, width: right - left, height: 22, color: rgb(0.95, 0.96, 0.95) });
+    draw("DESCRIPTION", left + 8, y + 10, { size: 8, bold: true });
+    draw("QTY", 350, y + 10, { size: 8, bold: true });
+    draw("UNIT PRICE", 395, y + 10, { size: 8, bold: true });
+    draw("AMOUNT", 495, y + 10, { size: 8, bold: true });
+    y -= 22;
+  };
+  drawItemsHeader();
+  invoice.items.forEach((item) => {
+    const descriptionLines = wrapLines(item.description, 265, 9);
+    const rowHeight = Math.max(18, descriptionLines.length * 14);
+    if (y - rowHeight < 55) {
+      page = pdf.addPage([595.28, 841.89]);
+      y = 785;
+      drawItemsHeader();
+    }
+    descriptionLines.forEach((line, index) => draw(line, left + 8, y - index * 14, { size: 9 }));
+    draw(String(item.quantity), 350, y, { size: 9 });
+    draw(pdfSafeText(currencyAmount(item.unit_price, invoice.currency)), 395, y, { size: 9 });
+    draw(pdfSafeText(currencyAmount(item.quantity * item.unit_price, invoice.currency)), 495, y, { size: 9 });
+    y -= rowHeight;
+    page.drawLine({ start: { x: left, y: y + 5 }, end: { x: right, y: y + 5 }, thickness: 0.5, color: rgb(0.9, 0.91, 0.9) });
+  });
+  y -= 14;
+  const amounts = invoiceAmounts(invoice);
+  const summaryRows = [
+    ["Subtotal", amounts.subtotal],
+    ...(amounts.discount !== 0 ? [[amounts.discount < 0 ? "Surcharge" : "Discount", amounts.discount]] : []),
+    [`Tax (${invoice.tax_rate}%)`, amounts.tax],
+  ];
+  summaryRows.forEach(([label, amount]) => {
+    ensureSpace(22);
+    draw(label, 350, y, { size: 10 });
+    const formatted = label === "Discount"
+      ? `- ${currencyAmount(Math.abs(amount), invoice.currency)}`
+      : label === "Surcharge"
+        ? `+ ${currencyAmount(Math.abs(amount), invoice.currency)}`
+        : currencyAmount(amount, invoice.currency);
+    draw(pdfSafeText(formatted), 450, y, { size: 10 });
+    y -= 20;
+  });
+  ensureSpace(34);
+  page.drawLine({ start: { x: 350, y: y + 6 }, end: { x: right, y: y + 6 }, thickness: 1, color: green });
+  draw("TOTAL", 350, y - 2, { size: 12, bold: true, color: green });
+  draw(pdfSafeText(currencyAmount(amounts.total, invoice.currency)), 450, y - 2, { size: 12, bold: true, color: green });
+  y -= 38;
+  if (invoice.notes) {
+    ensureSpace(40);
+    draw("NOTES", left, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
+    y -= 15;
+    drawWrapped(invoice.notes, left, right - left, { size: 10 });
+  }
+  const bytes = await pdf.save();
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${pdfSafeText(invoice.document_type)}-${pdfSafeText(invoice.invoice_number).replace(/[^a-zA-Z0-9_-]/g, "-")}.pdf`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadEditorPdf() {
+  try {
+    const invoice = invoiceFromForm();
+    await downloadInvoicePdf(invoice);
+    showMessage($("#editor-message"), "PDF downloaded.", true);
+  } catch (error) {
+    showMessage($("#editor-message"), error.message || "Could not create the PDF.");
+  }
+}
+
 async function handleDocumentAction(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -896,6 +1238,17 @@ async function handleDocumentAction(event) {
     showEditor(invoice);
   } else if (button.dataset.action === "print") {
     renderPrint(invoice);
+  } else if (button.dataset.action === "pdf") {
+    const message = activeView === "dashboard" ? $("#dashboard-message") : $("#business-message");
+    button.disabled = true;
+    try {
+      await downloadInvoicePdf(invoice);
+      showMessage(message, "PDF downloaded.", true);
+    } catch (error) {
+      showMessage(message, error.message || "Could not create the PDF.");
+    } finally {
+      button.disabled = false;
+    }
   } else if (button.dataset.action === "convert" && invoice.document_type === "quote") {
     const { error } = await supabase.from("invoices").update({
       document_type: "invoice",
@@ -1157,11 +1510,22 @@ $("#cancel-edit").addEventListener("click", () => setView("business"));
 $("#mobile-cancel").addEventListener("click", () => setView("business"));
 $("#save-invoice").addEventListener("click", saveInvoice);
 $("#mobile-save").addEventListener("click", saveInvoice);
+["download-editor-pdf", "preview-download-pdf", "mobile-download-pdf"].forEach((id) =>
+  $(`#${id}`).addEventListener("click", downloadEditorPdf),
+);
 $("#add-line").addEventListener("click", () => createLineItem());
 $("#tax-rate").addEventListener("input", updateTotals);
 $("#discount-type").addEventListener("change", updateTotals);
 $("#discount-value").addEventListener("input", updateTotals);
 $("#currency").addEventListener("input", updateTotals);
+invoiceForm.addEventListener("input", () => {
+  renderEditorPreview();
+  scheduleAutosave();
+});
+invoiceForm.addEventListener("change", () => {
+  renderEditorPreview();
+  scheduleAutosave();
+});
 invoiceForm.addEventListener("submit", (event) => event.preventDefault());
 $("#sign-out").addEventListener("click", async () => {
   const { error } = await supabase.auth.signOut();
