@@ -332,7 +332,7 @@ function renderDocumentRows(container, documents) {
     const actions = document.createElement("td");
     const buttons = document.createElement("div");
     buttons.className = "row-actions";
-    const labels = [["Edit", "edit"], ["Print", "print"]];
+    const labels = [["Edit", "edit"], ["Print", "print"], ["Email PDF", "send"]];
     if (invoice.document_type === "quote") labels.push(["Convert", "convert"]);
     labels.push(["Delete", "delete"]);
     labels.forEach(([label, action]) => {
@@ -841,7 +841,40 @@ async function handleDocumentAction(event) {
   if (!button) return;
   const invoice = invoices.find((item) => item.id === button.dataset.id);
   if (!invoice) return;
-  if (button.dataset.action === "edit") {
+  if (button.dataset.action === "send") {
+    const message = activeView === "dashboard" ? $("#dashboard-message") : $("#business-message");
+    if (!invoice.client_email) {
+      showMessage(message, "Add an email address to this client before sending the document.");
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Sending...";
+    showMessage(message, "");
+    try {
+      const { data, error } = await supabase.functions.invoke("send-document-email", {
+        body: { invoice_id: invoice.id },
+      });
+      if (error) {
+        let details = data?.error || error.message;
+        if (error.context instanceof Response) {
+          const responseText = await error.context.text();
+          try {
+            details = JSON.parse(responseText).error || details;
+          } catch {
+            details = `Email function error: ${error.context.status} ${error.context.statusText}`;
+          }
+        }
+        throw new Error(details || "The email could not be sent.");
+      }
+      await loadWorkspace();
+      showMessage(message, data?.message || `PDF sent to ${invoice.client_email}.`, true);
+    } catch (error) {
+      showMessage(message, error.message || "The email could not be sent.");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Email PDF";
+    }
+  } else if (button.dataset.action === "edit") {
     selectedBusinessId = invoice.business_id;
     updateBusinessSwitcher();
     showEditor(invoice);

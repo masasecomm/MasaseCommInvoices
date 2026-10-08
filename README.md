@@ -11,6 +11,7 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 - Add line items, tax, currency, status, dates, and notes.
 - Apply discounts as a percentage or fixed amount. A negative discount amount is treated as a surcharge.
 - Calculate totals and print or save quotes and invoices as PDFs.
+- Email a saved quote or invoice PDF directly to the client's email address.
 - Keep each account's invoices private with Supabase authentication and row-level security.
 
 The default currency is ZAR. Change the currency code on each invoice when needed.
@@ -34,6 +35,21 @@ The default currency is ZAR. Change the currency code on each invoice when neede
 7. Open the Pages URL and create an account, then create your first business. If email confirmation is enabled in Supabase, confirm your email before signing in.
 
 Because GitHub Pages is static hosting, the Supabase URL and publishable/anon key in `config.js` are visible to site visitors. This is expected: authentication and row-level security—not hiding the public key—protect invoice data.
+
+## Set up customer email
+
+Customer emails are sent by a Supabase Edge Function through Resend. The Resend API key must only be stored as a Supabase function secret; never add it to `config.js` or the GitHub repository.
+
+1. Create a Resend account and verify a sending domain. Copy its API key and choose a sender address on that verified domain, such as `Masase Commerce <invoices@your-domain.com>`.
+2. Install the Supabase CLI, sign in with `npx supabase login`, and link this repository to your project with `npx supabase link --project-ref iuuhshxpepccqjypreti`.
+3. Set the email provider secrets and deploy the function from the repository root:
+
+   ```powershell
+   npx supabase secrets set RESEND_API_KEY=re_your_key "EMAIL_FROM=Masase Commerce <invoices@your-domain.com>"
+   npx supabase functions deploy send-document-email
+   ```
+
+4. In the app, save a quote or invoice with a valid client email address, then choose **Email PDF** in its document actions. Successfully emailed draft documents are marked as sent.
 
 ## Local preview
 
