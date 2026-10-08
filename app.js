@@ -1394,7 +1394,7 @@ function updateTypeFields() {
   scheduleAutosave();
 }
 
-function showEditor(invoice = null, type = invoice?.document_type || "invoice") {
+function showEditor(invoice = null, type = invoice?.document_type || "invoice", { asNew = false } = {}) {
   clearMessages();
   if (!currentBusiness()) {
     showMessage($("#overview-message"), "Create or select a business before adding a quote or invoice.");
@@ -1404,14 +1404,15 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   window.clearTimeout(autosaveTimer);
   editorGeneration += 1;
   suppressAutosave = true;
-  editingId = invoice?.id || null;
-  invoiceNumberManuallyEdited = Boolean(invoice);
-  $("#invoice-type").value = invoice?.document_type || type;
+  const isEditing = Boolean(invoice && !asNew);
+  editingId = isEditing ? invoice.id : null;
+  invoiceNumberManuallyEdited = isEditing;
+  $("#invoice-type").value = asNew ? type : invoice?.document_type || type;
   termsDocumentType = $("#invoice-type").value;
-  $("#editor-eyebrow").textContent = invoice ? `EDIT ${invoice.document_type.toUpperCase()}` : `NEW ${type.toUpperCase()}`;
-  $("#editor-title").textContent = invoice ? `Edit ${invoice.document_type}` : `Create a ${type}`;
-  $("#issue-date").value = invoice?.issue_date || today();
-  $("#due-date").value = invoice?.due_date || today();
+  $("#editor-eyebrow").textContent = isEditing ? `EDIT ${invoice.document_type.toUpperCase()}` : `NEW ${$("#invoice-type").value.toUpperCase()}`;
+  $("#editor-title").textContent = isEditing ? `Edit ${invoice.document_type}` : `Create a ${$("#invoice-type").value}`;
+  $("#issue-date").value = asNew ? today() : invoice?.issue_date || today();
+  $("#due-date").value = asNew ? today() : invoice?.due_date || today();
   $("#client-name").value = invoice?.client_name || "";
   $("#client-company-name").value = invoice?.client_company_name || clients.find((client) => client.id === invoice?.client_id)?.company_name || "";
   $("#client-email").value = invoice?.client_email || "";
@@ -1422,9 +1423,11 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#discount-value").value = invoice?.discount_value ?? 0;
   $("#invoice-terms").value = invoice?.terms || defaultTerms(termsDocumentType);
   $("#invoice-notes").value = invoice?.notes || "";
-  $("#invoice-status").value = invoice?.status || "draft";
+  $("#invoice-status").value = asNew ? "draft" : invoice?.status || "draft";
   populateClientPicker(invoice?.client_id || "");
-  $("#invoice-number").value = invoice?.invoice_number || nextDocumentNumber(type, $("#issue-date").value);
+  $("#invoice-number").value = asNew
+    ? nextDocumentNumber($("#invoice-type").value, $("#issue-date").value, invoice?.client_id, invoice?.business_id)
+    : invoice?.invoice_number || nextDocumentNumber(type, $("#issue-date").value);
   populateProductOptions();
   lineItems.replaceChildren();
   (invoice?.items?.length ? invoice.items.map((item) => ({
@@ -1441,7 +1444,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#save-invoice").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   $("#mobile-save").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   setView("editor");
-  $("#editor-save-status").textContent = invoice ? "Saved" : "Draft not saved";
+  $("#editor-save-status").textContent = isEditing ? "Saved" : "Draft not saved";
   suppressAutosave = false;
   updateTotals();
 }
@@ -2081,11 +2084,19 @@ function openDocumentDetails(invoice) {
   preview.replaceChildren(printView.firstElementChild.cloneNode(true));
   $("#document-dialog").querySelector('[data-document-action="payment"]').hidden = invoice.document_type !== "invoice";
   $("#document-dialog").querySelector('[data-document-action="convert"]').hidden = invoice.document_type !== "quote";
+  $("#document-dialog").querySelector('[data-document-action="duplicate"]').hidden = invoice.document_type !== "invoice";
   $("#document-dialog").showModal();
 }
 
 async function runDocumentAction(action, invoice, button) {
   const message = activeMessage();
+  if (action === "duplicate" && invoice.document_type === "invoice") {
+    $("#document-dialog").close();
+    selectedBusinessId = invoice.business_id;
+    updateBusinessSwitcher();
+    showEditor(invoice, "invoice", { asNew: true });
+    return;
+  }
   if (action === "edit") {
     $("#document-dialog").close();
     selectedBusinessId = invoice.business_id;

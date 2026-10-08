@@ -9,7 +9,7 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 - Compare each business's document counts across today, this month, and this year with bar charts.
 - Save client names separately from company names, associate one client with multiple companies, and reuse those client-company details on documents.
 - Review each client's quotes and invoices alongside total paid and outstanding balances.
-- Create, edit, search, print, and delete quotes and invoices; convert a quote to an invoice.
+- Create, edit, search, print, and delete quotes and invoices; convert a quote to an invoice or start an unpaid draft invoice from an existing invoice.
 - Number invoices sequentially by issue date (`INV-yyyy-mm-dd-1`) or, when a saved client is selected, by client (`INV-Client-Name-1`). Existing documents keep their assigned numbers.
 - Automatically save complete document drafts and notes as you edit them.
 - Automatically remember line-item products, selling prices, and unit costs in the business catalogue for reuse.
