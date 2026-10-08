@@ -135,6 +135,7 @@ td:first-child { color: #29372e; font-weight: 700; }
 .page-footnote { margin: 18px 0 40px; color: #9ba19a; text-align: center; font-size: 11px; }
 
 .analytics-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; margin-bottom: 18px; }
+.business-period-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
 .analytics-panel { min-width: 0; }
 .analytics-panel .panel-heading { padding-bottom: 15px; }
 .business-chart, .status-chart, .activity-list { display: grid; gap: 17px; padding: 2px 22px 22px; }
@@ -320,6 +321,7 @@ td:first-child { color: #29372e; font-weight: 700; }
   .account-area .button-small { min-height: 31px; padding: 0 8px; font-size: 10px; }
   .account-email { display: none; }
   .analytics-grid { grid-template-columns: 1fr; gap: 11px; }
+  .business-period-grid { grid-template-columns: 1fr; gap: 11px; }
   .business-card-grid, .client-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding-right: 14px; padding-left: 14px; }
   .client-form-grid { padding-right: 16px; padding-left: 16px; }
   .summary-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }

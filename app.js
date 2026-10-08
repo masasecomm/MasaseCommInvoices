@@ -49,6 +49,7 @@ let autosaveInProgress = false;
 let autosaveQueued = false;
 let suppressAutosave = false;
 let editorGeneration = 0;
+let invoiceNumberManuallyEdited = false;
 
 function isConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
@@ -69,10 +70,52 @@ function today() {
   return local.toISOString().slice(0, 10);
 }
 
-function nextDocumentNumber(type) {
-  const year = new Date().getFullYear();
-  const prefix = type === "quote" ? "QUO" : "INV";
-  return `${prefix}-${year}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+function nextDocumentNumber(type, issueDate = today(), clientId = "", businessId = selectedBusinessId) {
+  if (type === "quote") {
+    return `QUO-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  }
+  const business = businesses.find((entry) => entry.id === businessId);
+  if (!business) return `INV-${issueDate || today()}-1`;
+
+  const client = clients.find((entry) => entry.id === clientId && entry.business_id === business.id);
+  const matchingDocuments = invoices.filter((invoice) => {
+    if (invoice.business_id !== business.id) return false;
+    if (!client) return invoice.document_type === "invoice" && invoice.issue_date === (issueDate || today());
+    return invoice.client_id === client.id || invoice.client_name.trim().toLowerCase() === client.name.trim().toLowerCase();
+  });
+  const clientSlug = client
+    ? client.name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "") || "Client"
+    : "";
+  const prefix = client ? "INV-" : `INV-${issueDate || today()}-`;
+  const numberedDocuments = client
+    ? invoices.filter((invoice) => invoice.business_id === business.id)
+    : matchingDocuments;
+  const highestNumber = numberedDocuments.reduce((highest, invoice) => {
+    const match = invoice.invoice_number.match(client
+      ? /^INV-(.+)-(\d+)$/i
+      : new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`, "i"));
+    if (!match) return highest;
+    if (client && match[1].toLowerCase() !== clientSlug.slice(0, Math.max(1, 35 - match[2].length)).toLowerCase()) return highest;
+    return Math.max(highest, Number(client ? match[2] : match[1]));
+  }, 0);
+  const previouslySent = client
+    ? matchingDocuments.filter((invoice) => invoice.status === "sent" || invoice.status === "paid").length
+    : matchingDocuments.length;
+  const sequence = Math.max(highestNumber + 1, previouslySent + 1);
+  if (!client) return `${prefix}${sequence}`;
+
+  const name = clientSlug.slice(0, Math.max(1, 35 - String(sequence).length));
+  return `INV-${name}-${sequence}`;
+}
+
+function refreshNewInvoiceNumber() {
+  if (editingId || invoiceNumberManuallyEdited || $("#invoice-type").value === "quote") return;
+  $("#invoice-number").value = nextDocumentNumber(
+    $("#invoice-type").value,
+    $("#issue-date").value,
+    $("#client-picker").value,
+  );
+  renderEditorPreview();
 }
 
 function currencyAmount(amount, currency) {
@@ -255,6 +298,18 @@ function renderBarChart(container, entries, valueLabel = "Documents") {
   });
 }
 
+function businessDocumentsByPeriod(period) {
+  const date = today();
+  const periodPrefix = period === "year" ? date.slice(0, 4) : date.slice(0, 7);
+  return businesses.map((business) => ({
+    label: business.name,
+    value: businessDocuments(business.id).filter((invoice) =>
+      period === "today" ? invoice.issue_date === date : invoice.issue_date.startsWith(periodPrefix),
+    ).length,
+    color: "green",
+  }));
+}
+
 function renderStatusChart(container, documents, includeQuotes = true) {
   const statuses = [
     { label: "Paid invoices", key: "paid", color: "green" },
@@ -304,6 +359,9 @@ function renderOverview() {
     color: "green",
   }));
   renderBarChart($("#overview-business-chart"), businessEntries);
+  renderBarChart($("#overview-business-today-chart"), businessDocumentsByPeriod("today"));
+  renderBarChart($("#overview-business-month-chart"), businessDocumentsByPeriod("month"));
+  renderBarChart($("#overview-business-year-chart"), businessDocumentsByPeriod("year"));
   renderStatusChart($("#overview-status-chart"), invoices);
 
   const cards = $("#overview-business-list");
@@ -398,6 +456,23 @@ function renderDocuments() {
   $("#stat-paid").textContent = selected.filter((document) => document.document_type === "invoice" && document.status === "paid").length;
 }
 
+function renderBusinessDocuments() {
+  const documents = businessDocuments(selectedBusinessId);
+  const query = $("#business-search").value.trim().toLowerCase();
+  const filtered = documents.filter((invoice) =>
+    [invoice.invoice_number, invoice.client_name, invoice.status, invoice.document_type]
+      .some((value) => (value || "").toLowerCase().includes(query)),
+  );
+  renderDocumentRows($("#business-document-rows"), filtered);
+  const noSearchMatches = documents.length !== 0 && filtered.length === 0;
+  $("#business-documents-empty").hidden = filtered.length !== 0;
+  $("#business-documents-empty h3").textContent = noSearchMatches ? "No matching documents" : "No documents yet";
+  $("#business-documents-empty p").textContent = noSearchMatches
+    ? "Try another search term to find the document you need."
+    : "Create a quote or invoice for this business to get started.";
+  $("#business-empty-new").hidden = noSearchMatches || !selectedBusinessId;
+}
+
 function renderBusinessDashboard() {
   const business = currentBusiness();
   if (!business) {
@@ -431,20 +506,19 @@ function renderBusinessDashboard() {
   recent.replaceChildren();
   const latest = [...docs].sort((a, b) => b.issue_date.localeCompare(a.issue_date)).slice(0, 5);
   if (!latest.length) appendText(recent, "p", "chart-empty", "Your recent quotes and invoices will appear here.");
-  latest.forEach((document) => {
+  latest.forEach((invoice) => {
     const row = document.createElement("div");
     row.className = "activity-row";
-    const icon = appendText(row, "span", `activity-icon ${document.document_type}`, document.document_type === "quote" ? "Q" : "I");
+    const icon = appendText(row, "span", `activity-icon ${invoice.document_type}`, invoice.document_type === "quote" ? "Q" : "I");
     const detail = document.createElement("div");
     detail.className = "activity-detail";
-    appendText(detail, "strong", "", document.invoice_number);
-    appendText(detail, "span", "", `${document.client_name} · ${formatDate(document.issue_date)}`);
-    appendText(row, "strong", "activity-amount", currencyAmount(invoiceTotal(document), document.currency));
+    appendText(detail, "strong", "", invoice.invoice_number);
+    appendText(detail, "span", "", `${invoice.client_name} · ${formatDate(invoice.issue_date)}`);
+    appendText(row, "strong", "activity-amount", currencyAmount(invoiceTotal(invoice), invoice.currency));
     row.prepend(icon, detail);
     recent.append(row);
   });
-  renderDocumentRows($("#business-document-rows"), docs);
-  $("#business-documents-empty").hidden = docs.length !== 0;
+  renderBusinessDocuments();
 }
 
 function renderClients() {
@@ -533,6 +607,7 @@ function selectClient(clientId) {
   $("#client-name").value = client?.name || "";
   $("#client-email").value = client?.email || "";
   $("#client-address").value = client?.address || "";
+  refreshNewInvoiceNumber();
   scheduleAutosave();
   renderEditorPreview();
 }
@@ -725,7 +800,11 @@ function updateTypeFields() {
   $("#due-date-label").textContent = isQuote ? "Valid until" : "Due date";
   $("#invoice-status").querySelector('option[value="paid"]').disabled = isQuote;
   if (isQuote && $("#invoice-status").value === "paid") $("#invoice-status").value = "sent";
-  $("#invoice-number").value = nextDocumentNumber(type);
+  if (!editingId && !invoiceNumberManuallyEdited && isQuote) {
+    $("#invoice-number").value = nextDocumentNumber(type);
+  } else {
+    refreshNewInvoiceNumber();
+  }
   $("#save-invoice").innerHTML = `Save ${type} <span aria-hidden="true">→</span>`;
   $("#mobile-save").innerHTML = `Save ${type} <span aria-hidden="true">→</span>`;
   renderEditorPreview();
@@ -743,10 +822,10 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   editorGeneration += 1;
   suppressAutosave = true;
   editingId = invoice?.id || null;
+  invoiceNumberManuallyEdited = Boolean(invoice);
   $("#invoice-type").value = invoice?.document_type || type;
   $("#editor-eyebrow").textContent = invoice ? `EDIT ${invoice.document_type.toUpperCase()}` : `NEW ${type.toUpperCase()}`;
   $("#editor-title").textContent = invoice ? `Edit ${invoice.document_type}` : `Create a ${type}`;
-  $("#invoice-number").value = invoice?.invoice_number || nextDocumentNumber(type);
   $("#issue-date").value = invoice?.issue_date || today();
   $("#due-date").value = invoice?.due_date || today();
   $("#client-name").value = invoice?.client_name || "";
@@ -759,6 +838,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#invoice-notes").value = invoice?.notes || "";
   $("#invoice-status").value = invoice?.status || "draft";
   populateClientPicker(invoice?.client_id || "");
+  $("#invoice-number").value = invoice?.invoice_number || nextDocumentNumber(type, $("#issue-date").value);
   populateProductOptions();
   lineItems.replaceChildren();
   (invoice?.items?.length ? invoice.items : [{ description: "", quantity: 1, unit_price: 0 }]).forEach(createLineItem);
@@ -1252,7 +1332,7 @@ async function handleDocumentAction(event) {
   } else if (button.dataset.action === "convert" && invoice.document_type === "quote") {
     const { error } = await supabase.from("invoices").update({
       document_type: "invoice",
-      invoice_number: nextDocumentNumber("invoice"),
+      invoice_number: nextDocumentNumber("invoice", invoice.issue_date, invoice.client_id, invoice.business_id),
       status: "draft",
     }).eq("id", invoice.id);
     if (error) {
@@ -1491,17 +1571,20 @@ $("#client-card-grid").addEventListener("click", (event) => {
 $("#client-picker").addEventListener("change", (event) => selectClient(event.target.value));
 $("#client-name").addEventListener("input", () => {
   const selected = clients.find((client) => client.id === $("#client-picker").value);
-  if (selected && selected.name !== $("#client-name").value.trim()) $("#client-picker").value = "";
+  if (selected && selected.name !== $("#client-name").value.trim()) {
+    $("#client-picker").value = "";
+    refreshNewInvoiceNumber();
+  }
 });
 $("#invoice-type").addEventListener("change", updateTypeFields);
+$("#issue-date").addEventListener("input", refreshNewInvoiceNumber);
+$("#issue-date").addEventListener("change", refreshNewInvoiceNumber);
+$("#invoice-number").addEventListener("input", () => {
+  invoiceNumberManuallyEdited = true;
+});
 $("#invoice-search").addEventListener("input", renderDocuments);
 $("#business-search").addEventListener("input", (event) => {
-  const query = event.target.value.trim().toLowerCase();
-  const docs = businessDocuments(selectedBusinessId).filter((document) =>
-    [document.invoice_number, document.client_name, document.status, document.document_type]
-      .some((value) => (value || "").toLowerCase().includes(query)),
-  );
-  renderDocumentRows($("#business-document-rows"), docs);
+  renderBusinessDocuments();
 });
 $("#business-document-rows").addEventListener("click", handleDocumentAction);
 $("#invoice-rows").addEventListener("click", handleDocumentAction);
