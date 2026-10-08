@@ -23,6 +23,7 @@ type Invoice = {
   issuer_email: string | null;
   issuer_address: string | null;
   client_name: string;
+  client_company_name: string;
   client_email: string | null;
   client_address: string | null;
   issue_date: string;
@@ -118,9 +119,9 @@ async function createPdf(invoice: Invoice, business: Business, paidTotal: number
   const pageSize: [number, number] = [595.28, 841.89];
   const margin = 48;
   const right = pageSize[0] - margin;
-  const textColor = rgb(0.12, 0.17, 0.14);
-  const mutedColor = rgb(0.39, 0.43, 0.4);
-  const accentColor = rgb(0.16, 0.38, 0.25);
+  const textColor = rgb(0, 0, 0);
+  const mutedColor = rgb(0, 0, 0);
+  const accentColor = rgb(0.03, 0.53, 0.79);
   let page = pdf.addPage(pageSize);
   let y = pageSize[1] - margin;
 
@@ -167,6 +168,7 @@ async function createPdf(invoice: Invoice, business: Business, paidTotal: number
   y -= 17;
   let leftHeight = drawWrapped(invoice.issuer_name, margin, y, columnWidth, 10, bold);
   let rightHeight = drawWrapped(invoice.client_name, margin + columnWidth + 25, y, columnWidth, 10, bold);
+  if (invoice.client_company_name) rightHeight += drawWrapped(invoice.client_company_name, margin + columnWidth + 25, y - rightHeight, columnWidth, 9);
   if (invoice.issuer_email) leftHeight += drawWrapped(invoice.issuer_email, margin, y - leftHeight, columnWidth, 9);
   if (invoice.client_email) rightHeight += drawWrapped(invoice.client_email, margin + columnWidth + 25, y - rightHeight, columnWidth, 9);
   if (invoice.issuer_address) leftHeight += drawWrapped(invoice.issuer_address, margin, y - leftHeight, columnWidth, 9);

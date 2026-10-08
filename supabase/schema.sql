@@ -15,16 +15,22 @@ create table if not exists public.clients (
   user_id uuid not null references auth.users (id) on delete cascade,
   business_id uuid not null references public.businesses (id) on delete cascade,
   name text not null check (char_length(name) between 1 and 160),
+  company_name text not null default '' check (char_length(company_name) <= 160),
   email text check (email is null or char_length(email) <= 254),
   phone text check (phone is null or char_length(phone) <= 60),
   address text check (address is null or char_length(address) <= 1000),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint clients_user_business_name_key unique (user_id, business_id, name)
+  constraint clients_user_business_name_company_key unique (user_id, business_id, name, company_name)
 );
 
-create index if not exists clients_user_business_name_idx
-  on public.clients (user_id, business_id, name);
+alter table public.clients add column if not exists company_name text not null default '';
+alter table public.clients drop constraint if exists clients_user_business_name_key;
+alter table public.clients drop constraint if exists clients_user_business_name_company_key;
+alter table public.clients add constraint clients_user_business_name_company_key
+  unique (user_id, business_id, name, company_name);
+create index if not exists clients_user_business_name_company_idx
+  on public.clients (user_id, business_id, name, company_name);
 
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
@@ -32,11 +38,16 @@ create table if not exists public.products (
   business_id uuid not null references public.businesses (id) on delete cascade,
   name text not null check (char_length(name) between 1 and 240),
   unit_price numeric(12, 2) not null check (unit_price >= 0),
+  unit_cost numeric(12, 2) not null default 0 check (unit_cost >= 0),
   currency text not null check (currency ~ '^[A-Z]{3}$'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint products_user_business_name_currency_key unique (user_id, business_id, name, currency)
 );
+
+alter table public.products add column if not exists unit_cost numeric(12, 2) not null default 0;
+alter table public.products drop constraint if exists products_unit_cost_check;
+alter table public.products add constraint products_unit_cost_check check (unit_cost >= 0);
 
 create index if not exists products_user_business_name_idx
   on public.products (user_id, business_id, name);
@@ -46,6 +57,7 @@ create table if not exists public.invoices (
   user_id uuid not null references auth.users (id) on delete cascade,
   business_id uuid not null references public.businesses (id) on delete cascade,
   client_id uuid references public.clients (id) on delete set null,
+  client_company_name text not null default '',
   document_type text not null default 'invoice' check (document_type in ('quote', 'invoice')),
   invoice_number text not null check (char_length(invoice_number) between 1 and 40),
   issuer_name text not null check (char_length(issuer_name) between 1 and 160),
@@ -73,6 +85,7 @@ create table if not exists public.invoices (
 
 alter table public.invoices add column if not exists business_id uuid references public.businesses (id) on delete cascade;
 alter table public.invoices add column if not exists client_id uuid references public.clients (id) on delete set null;
+alter table public.invoices add column if not exists client_company_name text not null default '';
 alter table public.invoices add column if not exists document_type text not null default 'invoice';
 alter table public.invoices add column if not exists discount_type text not null default 'amount';
 alter table public.invoices add column if not exists discount_value numeric(12, 2) not null default 0;
@@ -485,3 +498,5 @@ create policy "Users can delete their own business logos"
     and (select public.is_masasecomm_invoice_user())
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+
+notify pgrst, 'reload schema';

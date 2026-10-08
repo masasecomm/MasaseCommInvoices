@@ -7,11 +7,14 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 - Manage multiple businesses, including business contact details and an uploaded logo.
 - View an all-business dashboard and individual business dashboards with client and document visualizations.
 - Compare each business's document counts across today, this month, and this year with bar charts.
-- Automatically save and reuse client details within each business.
+- Save client names separately from company names, associate one client with multiple companies, and reuse those client-company details on documents.
+- Review each client's quotes and invoices alongside total paid and outstanding balances.
 - Create, edit, search, print, and delete quotes and invoices; convert a quote to an invoice.
 - Number invoices sequentially by issue date (`INV-yyyy-mm-dd-1`) or, when a saved client is selected, by client (`INV-Client-Name-1`). Existing documents keep their assigned numbers.
 - Automatically save complete document drafts and notes as you edit them.
-- Automatically remember line-item products and prices in the business catalogue for reuse.
+- Automatically remember line-item products, selling prices, and unit costs in the business catalogue for reuse.
+- Review product quantities sold, customer-by-customer sales, recorded costs, and gross profit; add catalogue products to new invoices.
+- Review workspace-wide revenue, collections, outstanding balances, company sales, and product profitability on the Reports page.
 - Find saved products regardless of capitalization, and avoid duplicate catalogue entries that differ only by case.
 - Add line items, tax, currency, status, dates, and notes.
 - Add editable estimate and invoice terms; converting an estimate switches to the default invoice payment terms.
@@ -27,7 +30,7 @@ The default currency is South African rand (ZAR), displayed with the `R` symbol.
 ## Set up cloud storage
 
 1. Create a Supabase project.
-2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client, product catalogue, document, dated invoice-payment ledger, and logo-storage policies. If you already have this app set up, rerun the full script to add the new terms field, payment ledger, and latest security policies; it preserves existing records.
+2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client-company directory, cost-aware product catalogue, document, dated invoice-payment ledger, and logo-storage policies. If you already have this app set up, rerun the full script to add the latest fields and policies; it preserves existing records.
 3. In Supabase project settings, copy the Project URL and the publishable key (or legacy `anon` key).
 4. Add those values to [`config.js`](./config.js):
 
@@ -44,7 +47,7 @@ The default currency is South African rand (ZAR), displayed with the `R` symbol.
 
 Because GitHub Pages is static hosting, the Supabase URL and publishable/anon key in `config.js` are visible to site visitors. This is expected: authentication and row-level security—not hiding the public key—protect invoice data.
 
-The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor so the payment ledger and latest policies are applied. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
+The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor so the client-company fields, product costs, payment ledger, and latest policies are applied. The script requests a PostgREST schema-cache reload at the end. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
 
 ## Set up customer email
 

@@ -13,6 +13,8 @@ const viewElements = [
   $("#overview-view"),
   $("#business-view"),
   $("#clients-view"),
+  $("#products-view"),
+  $("#reports-view"),
   $("#dashboard-view"),
   $("#editor-view"),
   $("#business-form-view"),
@@ -22,6 +24,9 @@ const messages = [
   $("#overview-message"),
   $("#business-message"),
   $("#clients-message"),
+  $("#products-message"),
+  $("#reports-message"),
+  $("#document-dialog-message"),
   $("#dashboard-message"),
   $("#editor-message"),
   $("#business-form-message"),
@@ -30,7 +35,7 @@ const messages = [
 const LOGO_BUCKET = "business-logos";
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
-const CLIENT_FIELD_IDS = ["saved-client-name", "saved-client-email", "saved-client-phone", "saved-client-address"];
+const CLIENT_FIELD_IDS = ["saved-client-name", "saved-client-company", "saved-client-email", "saved-client-phone", "saved-client-address"];
 const ALLOWED_ACCOUNT_EMAIL = "masasecomm@gmail.com";
 const INVOICE_TERMS = "Payment is due by the date shown on this invoice. Thank you for your business.";
 const QUOTE_TERMS = "This estimate is valid until the date shown. Work will begin after written acceptance.";
@@ -47,6 +52,7 @@ let activeView = "overview";
 let editingId = null;
 let editingBusinessId = null;
 let paymentInvoice = null;
+let detailInvoiceId = null;
 let termsDocumentType = "invoice";
 let pendingLogoFile = null;
 let autosaveTimer = null;
@@ -165,6 +171,19 @@ function invoiceTotal(invoice) {
   return invoiceAmounts(invoice).total;
 }
 
+function isIssuedInvoice(invoice) {
+  return invoice.document_type === "invoice" && invoice.status !== "draft";
+}
+
+function addCurrencyTotal(totals, currency, amount) {
+  totals.set(currency, (totals.get(currency) || 0) + amount);
+}
+
+function formatCurrencyTotals(totals) {
+  if (!totals.size) return currencyAmount(0, "ZAR");
+  return [...totals.entries()].map(([currency, amount]) => currencyAmount(amount, currency)).join(" · ");
+}
+
 function invoicePaidAmount(invoice, total = invoiceTotal(invoice)) {
   const recorded = invoicePayments(invoice).reduce((sum, payment) => sum + Number(payment.amount), 0);
   return Math.min(total, recorded || (invoice.status === "paid" ? total : 0));
@@ -194,7 +213,7 @@ function defaultTerms(type) {
 function setView(view) {
   activeView = view;
   viewElements.forEach((element) => { element.hidden = element.id !== `${view}-view`; });
-  ["overview", "business", "clients", "documents"].forEach((name) => {
+  ["overview", "business", "clients", "documents", "products", "reports"].forEach((name) => {
     const button = $(`#nav-${name}`);
     if (button) button.classList.toggle("active", view === (name === "documents" ? "dashboard" : name));
   });
@@ -311,41 +330,222 @@ function appendImage(parent, url, className, alt) {
   return image;
 }
 
-function renderBarChart(container, entries, valueLabel = "Documents") {
+function renderBarChart(container, entries, valueLabel = "Documents", formatValue = (value) => `${value} ${valueLabel.toLowerCase()}`) {
   container.replaceChildren();
   if (!entries.length) {
     appendText(container, "p", "chart-empty", "Add businesses and documents to see activity here.");
     return;
   }
-  const max = Math.max(1, ...entries.map((entry) => entry.value));
+  const max = Math.max(1, ...entries.map((entry) => Math.abs(entry.value)));
   entries.forEach((entry) => {
     const row = document.createElement("div");
     row.className = "bar-chart-row";
     const header = document.createElement("div");
     header.className = "bar-chart-label";
     appendText(header, "span", "", entry.label);
-    appendText(header, "strong", "", `${entry.value} ${valueLabel.toLowerCase()}`);
+    appendText(header, "strong", "", formatValue(entry.value, entry));
     const track = document.createElement("div");
     track.className = "bar-track";
     const fill = document.createElement("span");
     fill.className = `bar-fill ${entry.color || ""}`;
-    fill.style.width = `${Math.max(entry.value ? 7 : 0, entry.value / max * 100)}%`;
+    fill.style.width = `${Math.max(entry.value ? 7 : 0, Math.abs(entry.value) / max * 100)}%`;
     track.append(fill);
     row.append(header, track);
     container.append(row);
   });
 }
 
-function businessDocumentsByPeriod(period) {
-  const date = today();
-  const periodPrefix = period === "year" ? date.slice(0, 4) : date.slice(0, 7);
-  return businesses.map((business) => ({
-    label: business.name,
-    value: businessDocuments(business.id).filter((invoice) =>
-      period === "today" ? invoice.issue_date === date : invoice.issue_date.startsWith(periodPrefix),
-    ).length,
-    color: "green",
-  }));
+function renderCurrencyBarCharts(container, entries, valueLabel) {
+  container.replaceChildren();
+  if (!entries.length) {
+    appendText(container, "p", "chart-empty", "Add invoices to see sales by currency.");
+    return;
+  }
+  const grouped = new Map();
+  entries.forEach((entry) => {
+    const values = grouped.get(entry.currency) || [];
+    values.push(entry);
+    grouped.set(entry.currency, values);
+  });
+  grouped.forEach((values, currency) => {
+    const section = document.createElement("section");
+    section.className = "currency-chart-group";
+    appendText(section, "h3", "period-business-name", currency);
+    const chart = document.createElement("div");
+    chart.className = "business-chart currency-chart";
+    renderBarChart(chart, values, valueLabel, (value) => currencyAmount(value, currency));
+    section.append(chart);
+    container.append(section);
+  });
+}
+
+function topEntriesByCurrency(entries, limit, compare = (left, right) => right.value - left.value) {
+  const grouped = new Map();
+  entries.forEach((entry) => {
+    const values = grouped.get(entry.currency) || [];
+    values.push(entry);
+    grouped.set(entry.currency, values);
+  });
+  return [...grouped.values()].flatMap((values) => values.sort(compare).slice(0, limit));
+}
+
+function clientCompanyName(invoice) {
+  return invoice.client_company_name
+    || clients.find((client) => client.id === invoice.client_id)?.company_name
+    || "";
+}
+
+function invoiceProductCost(item, businessId, currency) {
+  if (item.unit_cost !== undefined && item.unit_cost !== null) return Number(item.unit_cost) || 0;
+  const product = products.find((entry) =>
+    entry.business_id === businessId &&
+    entry.currency === currency &&
+    productNameKey(entry.name) === productNameKey(item.description),
+  );
+  return Number(product?.unit_cost) || 0;
+}
+
+function productSales(businessId = null) {
+  const totals = new Map();
+  invoices.filter((invoice) => isIssuedInvoice(invoice) && (!businessId || invoice.business_id === businessId))
+    .forEach((invoice) => invoice.items.forEach((item) => {
+      const key = `${invoice.business_id}:${invoice.currency}:${productNameKey(item.description)}`;
+      const cost = invoiceProductCost(item, invoice.business_id, invoice.currency);
+      const sales = Number(item.quantity) * Number(item.unit_price);
+      const entry = totals.get(key) || {
+        key,
+        name: item.description,
+        business_id: invoice.business_id,
+        currency: invoice.currency,
+        quantity: 0,
+        sales: 0,
+        cost: 0,
+        buyers: new Set(),
+      };
+      entry.quantity += Number(item.quantity) || 0;
+      entry.sales += sales;
+      entry.cost += Number(item.quantity) * cost;
+      entry.buyers.add(`${invoice.client_name} · ${clientCompanyName(invoice)}`.trim().replace(/ ·$/, ""));
+      totals.set(key, entry);
+    }));
+  return [...totals.values()].map((entry) => ({ ...entry, profit: entry.sales - entry.cost }));
+}
+
+function customerCompanySales(year = String(new Date().getFullYear())) {
+  const totals = new Map();
+  invoices.filter((invoice) => isIssuedInvoice(invoice) && invoice.issue_date.startsWith(year))
+    .forEach((invoice) => {
+      const company = clientCompanyName(invoice) || invoice.client_name;
+      const key = `${invoice.currency}:${company}`;
+      totals.set(key, {
+        label: `${company} · ${invoice.currency}`,
+        value: (totals.get(key)?.value || 0) + invoiceTotal(invoice),
+        currency: invoice.currency,
+        color: "green",
+      });
+    });
+  const groups = [...totals.values()].reduce((byCurrency, entry) => {
+    const group = byCurrency.get(entry.currency) || [];
+    group.push(entry);
+    byCurrency.set(entry.currency, group);
+    return byCurrency;
+  }, new Map());
+  return [...groups.values()].flatMap((entries) => entries
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 5));
+}
+
+function renderWeekSalesChart(container) {
+  container.replaceChildren();
+  if (!businesses.length) {
+    appendText(container, "p", "chart-empty", "Add a business and invoices to see this week's sales.");
+    return;
+  }
+  const todayDate = today();
+  const [year, month, day] = todayDate.split("-").map(Number);
+  const todayLocal = new Date(year, month - 1, day);
+  const mondayOffset = (todayLocal.getDay() + 6) % 7;
+  const monday = addDaysToIsoDate(todayDate, -mondayOffset);
+  const dates = Array.from({ length: 7 }, (_, index) => addDaysToIsoDate(monday, index));
+  const labels = ["M", "T", "W", "T", "F", "S", "S"];
+  businesses.forEach((business) => {
+    const currencies = new Set(businessDocuments(business.id)
+      .filter((invoice) => isIssuedInvoice(invoice) && invoice.issue_date.startsWith(String(new Date().getFullYear())))
+      .map((invoice) => invoice.currency));
+    if (!currencies.size) currencies.add("ZAR");
+    currencies.forEach((currency) => {
+    const section = document.createElement("section");
+    section.className = "period-business-chart";
+    appendText(section, "h3", "period-business-name", `${business.name} · ${currency}`);
+    const sales = dates.map((date) => businessDocuments(business.id)
+      .filter((invoice) => isIssuedInvoice(invoice) && invoice.currency === currency && invoice.issue_date === date)
+      .reduce((sum, invoice) => sum + invoiceTotal(invoice), 0));
+    const max = Math.max(1, ...sales);
+    const chart = document.createElement("div");
+    chart.className = "period-bars period-bars-week";
+    chart.setAttribute("role", "img");
+    chart.setAttribute("aria-label", `${business.name} invoice sales Monday to Sunday`);
+    dates.forEach((date, index) => {
+      const dayColumn = document.createElement("div");
+      dayColumn.className = "period-bar-day";
+      const bar = document.createElement("span");
+      bar.className = `period-bar ${date === todayDate ? "period-bar-today" : "period-bar-muted"}`;
+      bar.style.height = `${sales[index] ? Math.max(5, sales[index] / max * 100) : 2}%`;
+      if (!sales[index]) bar.classList.add("period-bar-empty");
+      dayColumn.title = `${labels[index]} · ${formatDate(date)} · ${currencyAmount(sales[index], currency)}`;
+      dayColumn.setAttribute("aria-label", dayColumn.title);
+      dayColumn.append(bar);
+      appendText(dayColumn, "span", "period-bar-label", labels[index]);
+      chart.append(dayColumn);
+    });
+    section.append(chart);
+    container.append(section);
+    });
+  });
+}
+
+function renderMonthSalesChart(container) {
+  container.replaceChildren();
+  if (!businesses.length) {
+    appendText(container, "p", "chart-empty", "Add a business and invoices to see this year's sales.");
+    return;
+  }
+  const year = String(new Date().getFullYear());
+  const labels = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+  businesses.forEach((business) => {
+    const currencies = new Set(businessDocuments(business.id)
+      .filter((invoice) => isIssuedInvoice(invoice) && invoice.issue_date.startsWith(year))
+      .map((invoice) => invoice.currency));
+    if (!currencies.size) currencies.add("ZAR");
+    currencies.forEach((currency) => {
+    const section = document.createElement("section");
+    section.className = "period-business-chart";
+    appendText(section, "h3", "period-business-name", `${business.name} · ${currency}`);
+    const monthly = Array.from({ length: 12 }, (_, index) => businessDocuments(business.id)
+      .filter((invoice) => isIssuedInvoice(invoice) && invoice.currency === currency && invoice.issue_date.startsWith(`${year}-${String(index + 1).padStart(2, "0")}`))
+      .reduce((sum, invoice) => sum + invoiceTotal(invoice), 0));
+    const max = Math.max(1, ...monthly);
+    const chart = document.createElement("div");
+    chart.className = "period-bars period-bars-month";
+    chart.setAttribute("role", "img");
+    chart.setAttribute("aria-label", `${business.name} monthly invoice sales for ${year}`);
+    monthly.forEach((value, index) => {
+      const column = document.createElement("div");
+      column.className = "period-bar-day";
+      const bar = document.createElement("span");
+      bar.className = `period-bar ${value ? "period-bar-current-month" : "period-bar-muted"}`;
+      bar.style.height = `${value ? Math.max(5, value / max * 100) : 2}%`;
+      if (!value) bar.classList.add("period-bar-empty");
+      column.title = `${labels[index]} · ${currencyAmount(value, currency)}`;
+      column.setAttribute("aria-label", column.title);
+      column.append(bar);
+      appendText(column, "span", "period-bar-label", labels[index]);
+      chart.append(column);
+    });
+    section.append(chart);
+    container.append(section);
+    });
+  });
 }
 
 function isoDate(date) {
@@ -357,59 +557,6 @@ function isoDate(date) {
 function addDaysToIsoDate(value, days) {
   const [year, month, day] = value.split("-").map(Number);
   return isoDate(new Date(year, month - 1, day + days));
-}
-
-function renderBusinessPeriodCharts(container, startDate, endDate, highlightDate, highlightClass, highlightFromDate = "") {
-  container.replaceChildren();
-  if (!businesses.length) {
-    appendText(container, "p", "chart-empty", "Add businesses and documents to see daily activity here.");
-    return;
-  }
-
-  const dates = [];
-  for (let date = startDate; date <= endDate; date = addDaysToIsoDate(date, 1)) dates.push(date);
-
-  businesses.forEach((business) => {
-    const section = document.createElement("section");
-    section.className = "period-business-chart";
-    appendText(section, "h3", "period-business-name", business.name);
-    const chart = document.createElement("div");
-    chart.className = `period-bars ${dates.length > 7 ? "period-bars-long" : "period-bars-week"}`;
-    chart.setAttribute("role", "img");
-    chart.setAttribute("aria-label", `${business.name} documents issued per day`);
-    const documents = businessDocuments(business.id);
-    const countsByDate = new Map();
-    documents.forEach((invoice) => countsByDate.set(invoice.issue_date, (countsByDate.get(invoice.issue_date) || 0) + 1));
-    const counts = dates.map((date) => countsByDate.get(date) || 0);
-    const max = Math.max(1, ...counts);
-
-    dates.forEach((date, index) => {
-      const day = document.createElement("div");
-      day.className = "period-bar-day";
-      const value = counts[index];
-      const bar = document.createElement("span");
-      const highlighted = date === highlightDate || (highlightFromDate && date >= highlightFromDate);
-      bar.className = `period-bar ${highlighted ? highlightClass : "period-bar-muted"}`;
-      bar.style.height = `${value ? Math.max(5, value / max * 100) : 2}%`;
-      if (!value) bar.classList.add("period-bar-empty");
-      day.title = `${formatDate(date)} · ${value} ${value === 1 ? "document" : "documents"}`;
-      day.setAttribute("aria-label", day.title);
-      day.append(bar);
-      const label = document.createElement("span");
-      label.className = "period-bar-label";
-      label.textContent = date === startDate || date.slice(-2) === "01" || index % (dates.length > 14 ? 7 : 1) === 0
-        ? date.slice(-2)
-        : "";
-      day.append(label);
-      chart.append(day);
-    });
-
-    const track = document.createElement("div");
-    track.className = "period-bars-scroll";
-    track.append(chart);
-    section.append(track);
-    container.append(section);
-  });
 }
 
 function renderStatusChart(container, documents, includeQuotes = true) {
@@ -462,18 +609,13 @@ function renderOverview() {
   }));
   renderBarChart($("#overview-business-chart"), businessEntries);
   
-  // Today chart: 7 days with today highlighted in cyan
-  const todayDate = today();
-  const sevenDaysAgo = addDaysToIsoDate(todayDate, -6);
-  renderBusinessPeriodCharts($("#overview-business-today-chart"), sevenDaysAgo, todayDate, todayDate, "period-bar-today");
-  
-  // Month chart: 3 months with current month in magenta
-  const firstDayThisMonth = todayDate.slice(0, 7) + "-01";
-  const threeMonthsAgo = addDaysToIsoDate(firstDayThisMonth, -61);
-  renderBusinessPeriodCharts($("#overview-business-month-chart"), threeMonthsAgo, todayDate, "", "period-bar-current-month", firstDayThisMonth);
-  
-  // Year chart: aggregated by business (keeping simple bar chart)
-  renderBarChart($("#overview-business-year-chart"), businessDocumentsByPeriod("year"));
+  renderWeekSalesChart($("#overview-business-today-chart"));
+  renderMonthSalesChart($("#overview-business-month-chart"));
+  renderCurrencyBarCharts(
+    $("#overview-business-year-chart"),
+    customerCompanySales(),
+    "invoice sales",
+  );
   renderStatusChart($("#overview-status-chart"), invoices);
 
   const cards = $("#overview-business-list");
@@ -510,6 +652,9 @@ function renderDocumentRows(container, documents) {
   container.replaceChildren();
   documents.forEach((invoice) => {
     const row = document.createElement("tr");
+    row.dataset.documentId = invoice.id;
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", `Open ${invoice.document_type} ${invoice.invoice_number}`);
     const type = document.createElement("td");
     const typePill = appendText(type, "span", `type-pill type-${invoice.document_type}`, invoice.document_type);
     typePill.title = invoice.document_type === "quote" ? "Quote" : "Invoice";
@@ -518,7 +663,10 @@ function renderDocumentRows(container, documents) {
     const client = document.createElement("div");
     client.className = "client-cell";
     appendText(client, "span", "client-avatar", invoice.client_name.trim().slice(0, 1).toUpperCase());
-    appendText(client, "span", "", invoice.client_name);
+    const identity = document.createElement("span");
+    appendText(identity, "span", "", invoice.client_name);
+    if (clientCompanyName(invoice)) appendText(identity, "small", "", clientCompanyName(invoice));
+    client.append(identity);
     clientCell.append(client);
     const issue = appendText(row, "td", "", formatDate(invoice.issue_date));
     const due = appendText(row, "td", "", formatDate(invoice.due_date));
@@ -530,25 +678,8 @@ function renderDocumentRows(container, documents) {
     const statusCell = document.createElement("td");
     const displayStatus = invoiceDisplayStatus(invoice);
     appendText(statusCell, "span", `status-pill status-${displayStatus === "partially paid" ? "partial" : displayStatus}`, displayStatus);
-    const actions = document.createElement("td");
-    const buttons = document.createElement("div");
-    buttons.className = "row-actions";
-    const labels = [["Edit", "edit"], ["Download PDF", "pdf"], ["Print", "print"], ["Email PDF", "send"]];
-    if (invoice.document_type === "quote") labels.push(["Convert", "convert"]);
-    if (invoice.document_type === "invoice") labels.push(["Apply payment", "payment"]);
-    labels.push(["Delete", "delete"]);
-    labels.forEach(([label, action]) => {
-      const button = document.createElement("button");
-      button.className = `row-action${action === "delete" ? " row-action-delete" : ""}`;
-      button.type = "button";
-      button.textContent = label;
-      button.dataset.action = action;
-      button.dataset.id = invoice.id;
-      buttons.append(button);
-    });
-    actions.append(buttons);
     row.prepend(type);
-    row.append(clientCell, issue, due, amount, statusCell, actions);
+    row.append(clientCell, issue, due, amount, statusCell);
     container.append(row);
     number.setAttribute("data-label", "Number");
   });
@@ -558,7 +689,7 @@ function renderDocuments() {
   const selected = businessDocuments(selectedBusinessId);
   const query = $("#invoice-search").value.trim().toLowerCase();
   const filtered = selected.filter((invoice) =>
-    [invoice.invoice_number, invoice.client_name, invoice.client_email, invoice.status, invoice.document_type]
+    [invoice.invoice_number, invoice.client_name, clientCompanyName(invoice), invoice.client_email, invoice.status, invoice.document_type]
       .some((value) => (value || "").toLowerCase().includes(query)),
   );
   renderDocumentRows($("#invoice-rows"), filtered);
@@ -578,7 +709,7 @@ function renderBusinessDocuments() {
   const documents = businessDocuments(selectedBusinessId);
   const query = $("#business-search").value.trim().toLowerCase();
   const filtered = documents.filter((invoice) =>
-    [invoice.invoice_number, invoice.client_name, invoice.status, invoice.document_type]
+    [invoice.invoice_number, invoice.client_name, clientCompanyName(invoice), invoice.status, invoice.document_type]
       .some((value) => (value || "").toLowerCase().includes(query)),
   );
   renderDocumentRows($("#business-document-rows"), filtered);
@@ -639,13 +770,76 @@ function renderBusinessDashboard() {
   renderBusinessDocuments();
 }
 
+function clientInvoices(client) {
+  return invoices.filter((invoice) =>
+    invoice.business_id === client.business_id &&
+    (invoice.client_id === client.id || (
+      !invoice.client_id &&
+      invoice.client_name.trim().toLowerCase() === client.name.trim().toLowerCase() &&
+      clientCompanyName(invoice).trim().toLowerCase() === (client.company_name || "").trim().toLowerCase()
+    )),
+  );
+}
+
+function clientFinancials(client) {
+  const documents = clientInvoices(client).filter(isIssuedInvoice);
+  const invoiced = new Map();
+  const paid = new Map();
+  const owing = new Map();
+  documents.forEach((invoice) => {
+    const total = invoiceTotal(invoice);
+    const received = invoicePaidAmount(invoice);
+    addCurrencyTotal(invoiced, invoice.currency, total);
+    addCurrencyTotal(paid, invoice.currency, received);
+    addCurrencyTotal(owing, invoice.currency, Math.max(0, total - received));
+  });
+  return { documents: clientInvoices(client), invoiced, paid, owing };
+}
+
+function openClientDocuments(client) {
+  const financials = clientFinancials(client);
+  $("#client-documents-title").textContent = `${client.name} · ${client.company_name || "Company not set"}`;
+  const summary = $("#client-document-summary");
+  summary.replaceChildren();
+  [
+    ["Invoiced", formatCurrencyTotals(financials.invoiced)],
+    ["Paid", formatCurrencyTotals(financials.paid)],
+    ["Owing", formatCurrencyTotals(financials.owing)],
+  ].forEach(([label, amount]) => {
+    const card = document.createElement("div");
+    appendText(card, "span", "", label);
+    appendText(card, "strong", "", amount);
+    summary.append(card);
+  });
+  const rows = $("#client-document-rows");
+  rows.replaceChildren();
+  financials.documents.forEach((invoice) => {
+    const row = document.createElement("tr");
+    row.dataset.documentId = invoice.id;
+    row.tabIndex = 0;
+    appendText(row, "td", "", invoice.invoice_number);
+    appendText(row, "td", "", invoice.document_type);
+    appendText(row, "td", "", formatDate(invoice.issue_date));
+    appendText(row, "td", "", currencyAmount(invoiceTotal(invoice), invoice.currency));
+    appendText(row, "td", "", invoice.document_type === "invoice" ? currencyAmount(invoicePaidAmount(invoice), invoice.currency) : "—");
+    appendText(row, "td", "", invoice.document_type === "invoice" ? currencyAmount(Math.max(0, invoiceTotal(invoice) - invoicePaidAmount(invoice)), invoice.currency) : "—");
+    const action = document.createElement("td");
+    const button = appendText(action, "button", "row-action", "Open");
+    button.type = "button";
+    button.dataset.openDocument = invoice.id;
+    row.append(action);
+    rows.append(row);
+  });
+  $("#client-documents-dialog").showModal();
+}
+
 function renderClients() {
   $("#clients-total").textContent = clients.length;
   $("#clients-business-count").textContent = new Set(clients.map((client) => client.business_id)).size;
   const query = $("#client-search").value.trim().toLowerCase();
   const matching = clients.filter((client) => {
     const business = businesses.find((entry) => entry.id === client.business_id);
-    return [client.name, client.email, client.phone, business?.name]
+    return [client.name, client.company_name, client.email, client.phone, business?.name]
       .some((value) => (value || "").toLowerCase().includes(query));
   });
   const container = $("#client-card-grid");
@@ -658,16 +852,24 @@ function renderClients() {
     const detail = document.createElement("div");
     detail.className = "client-card-detail";
     appendText(detail, "h3", "", client.name);
+    appendText(detail, "strong", "client-company-name", client.company_name || "Company not set");
     appendText(detail, "span", "client-business-tag", business?.name || "Business");
     if (client.email) appendText(detail, "p", "", client.email);
     if (client.phone) appendText(detail, "p", "", client.phone);
     if (client.address) appendText(detail, "p", "client-address-text", client.address);
+    const financials = clientFinancials(client);
+    appendText(detail, "p", "client-balance-line", `${financials.documents.length} documents · ${formatCurrencyTotals(financials.paid)} paid · ${formatCurrencyTotals(financials.owing)} owing`);
+    const documents = document.createElement("button");
+    documents.className = "row-action client-documents-button";
+    documents.type = "button";
+    documents.textContent = "View documents";
+    documents.dataset.clientDocuments = client.id;
     const edit = document.createElement("button");
     edit.className = "row-action";
     edit.type = "button";
     edit.textContent = "Edit";
     edit.dataset.editClient = client.id;
-    card.append(detail, edit);
+    card.append(detail, documents, edit);
     container.append(card);
   });
   $("#clients-empty").hidden = matching.length !== 0;
@@ -693,11 +895,209 @@ function renderClients() {
   if (businesses.some((business) => business.id === currentSelection)) businessSelect.value = currentSelection;
 }
 
+function renderProducts() {
+  const businessId = selectedBusinessId;
+  const catalog = businessProducts(businessId);
+  const sales = productSales(businessId);
+  const search = $("#product-search").value.trim().toLowerCase();
+  const filtered = catalog.filter((product) => product.name.toLowerCase().includes(search));
+  const byKey = new Map(sales.map((entry) => [entry.key, entry]));
+  const productRows = filtered.map((product) => {
+    const key = `${product.business_id}:${product.currency}:${productNameKey(product.name)}`;
+    return {
+      product,
+      sale: byKey.get(key) || {
+        quantity: 0,
+        sales: 0,
+        cost: 0,
+        profit: 0,
+        buyers: new Set(),
+      },
+    };
+  });
+  const currencies = new Map();
+  sales.forEach((sale) => {
+    const totals = currencies.get(sale.currency) || { sales: 0, profit: 0 };
+    totals.sales += sale.sales;
+    totals.profit += sale.profit;
+    currencies.set(sale.currency, totals);
+  });
+  $("#products-count").textContent = catalog.length;
+  $("#products-units-sold").textContent = String(sales.reduce((sum, item) => sum + item.quantity, 0));
+  $("#products-sales-total").textContent = formatCurrencyTotals(new Map([...currencies].map(([currency, value]) => [currency, value.sales])));
+  $("#products-profit-total").textContent = formatCurrencyTotals(new Map([...currencies].map(([currency, value]) => [currency, value.profit])));
+  renderBarChart(
+    $("#products-bestseller-chart"),
+    [...sales].sort((left, right) => right.quantity - left.quantity).slice(0, 8)
+      .map((item) => ({ label: `${item.name} · ${item.currency}`, value: item.quantity, color: "green" })),
+    "units",
+    (value) => `${value} units`,
+  );
+  renderCurrencyBarCharts(
+    $("#products-profit-chart"),
+    topEntriesByCurrency(
+      sales.map((item) => ({
+        label: item.name,
+        value: item.profit,
+        currency: item.currency,
+        color: item.profit < 0 ? "red" : "blue",
+      })),
+      8,
+      (left, right) => Math.abs(right.value) - Math.abs(left.value),
+    ),
+    "profit",
+  );
+  const rows = $("#product-rows");
+  rows.replaceChildren();
+  productRows.forEach(({ product, sale }) => {
+    const row = document.createElement("tr");
+    appendText(row, "td", "", product.name);
+    appendText(row, "td", "", String(sale.quantity));
+    appendText(row, "td", "product-buyers", [...sale.buyers].join(", ") || "No sales yet");
+    appendText(row, "td", "", currencyAmount(sale.sales, product.currency));
+    appendText(row, "td", "", currencyAmount(sale.cost, product.currency));
+    appendText(row, "td", "", currencyAmount(sale.profit, product.currency));
+    const actions = document.createElement("td");
+    [["Edit", "edit"], ["New invoice", "new-invoice"]].forEach(([label, action]) => {
+      const button = appendText(actions, "button", "row-action", label);
+      button.type = "button";
+      button.dataset.productAction = action;
+      button.dataset.productId = product.id;
+    });
+    row.append(actions);
+    rows.append(row);
+  });
+  $("#products-empty").hidden = productRows.length !== 0;
+  const saleRows = $("#product-sales-rows");
+  saleRows.replaceChildren();
+  const transactions = invoices.filter((invoice) => invoice.business_id === businessId && isIssuedInvoice(invoice))
+    .flatMap((invoice) => invoice.items.map((item) => ({
+      invoice,
+      item,
+      cost: invoiceProductCost(item, invoice.business_id, invoice.currency),
+    })))
+    .filter(({ item }) => !search || item.description.toLowerCase().includes(search))
+    .sort((left, right) => right.invoice.issue_date.localeCompare(left.invoice.issue_date));
+  transactions.forEach(({ invoice, item, cost }) => {
+    const row = document.createElement("tr");
+    row.dataset.documentId = invoice.id;
+    row.tabIndex = 0;
+    appendText(row, "td", "", item.description);
+    appendText(row, "td", "", invoice.invoice_number);
+    appendText(row, "td", "", invoice.client_name);
+    appendText(row, "td", "", clientCompanyName(invoice) || "—");
+    appendText(row, "td", "", String(item.quantity));
+    appendText(row, "td", "", currencyAmount(Number(item.quantity) * Number(item.unit_price), invoice.currency));
+    appendText(row, "td", "", currencyAmount(Number(item.quantity) * cost, invoice.currency));
+    appendText(row, "td", "", currencyAmount(Number(item.quantity) * (Number(item.unit_price) - cost), invoice.currency));
+    saleRows.append(row);
+  });
+  $("#product-sales-empty").hidden = transactions.length !== 0;
+}
+
+function renderReports() {
+  const documents = invoices.filter(isIssuedInvoice);
+  const invoiced = new Map();
+  const collected = new Map();
+  const owing = new Map();
+  documents.forEach((invoice) => {
+    const total = invoiceTotal(invoice);
+    const paid = invoicePaidAmount(invoice);
+    addCurrencyTotal(invoiced, invoice.currency, total);
+    addCurrencyTotal(collected, invoice.currency, paid);
+    addCurrencyTotal(owing, invoice.currency, Math.max(0, total - paid));
+  });
+  const sales = productSales();
+  const profit = new Map();
+  sales.forEach((item) => addCurrencyTotal(profit, item.currency, item.profit));
+  $("#reports-invoiced").textContent = formatCurrencyTotals(invoiced);
+  $("#reports-collected").textContent = formatCurrencyTotals(collected);
+  $("#reports-outstanding").textContent = formatCurrencyTotals(owing);
+  $("#reports-profit").textContent = formatCurrencyTotals(profit);
+
+  const year = String(new Date().getFullYear());
+  const monthlyTotals = new Map();
+  documents.filter((invoice) => invoice.issue_date.startsWith(year)).forEach((invoice) => {
+    const month = Number(invoice.issue_date.slice(5, 7)) - 1;
+    const key = `${invoice.currency}:${month}`;
+    monthlyTotals.set(key, (monthlyTotals.get(key) || 0) + invoiceTotal(invoice));
+  });
+  const currencySet = new Set(documents.map((invoice) => invoice.currency));
+  const monthlyEntries = [...currencySet].flatMap((currency) =>
+    Array.from({ length: 12 }, (_, month) => ({
+      label: `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month]} · ${currency}`,
+      value: monthlyTotals.get(`${currency}:${month}`) || 0,
+      currency,
+      color: "green",
+    })),
+  );
+  renderCurrencyBarCharts($("#reports-monthly-chart"), monthlyEntries, "sales");
+  const companiesByCurrency = new Map();
+  documents.filter((invoice) => invoice.issue_date.startsWith(year)).forEach((invoice) => {
+    const name = clientCompanyName(invoice) || invoice.client_name;
+    const key = `${invoice.currency}:${name}`;
+    companiesByCurrency.set(key, {
+      label: `${name} · ${invoice.currency}`,
+      value: (companiesByCurrency.get(key)?.value || 0) + invoiceTotal(invoice),
+      currency: invoice.currency,
+      color: "blue",
+    });
+  });
+  renderCurrencyBarCharts(
+    $("#reports-company-chart"),
+    topEntriesByCurrency([...companiesByCurrency.values()], 8),
+    "sales",
+  );
+  renderCurrencyBarCharts(
+    $("#reports-product-chart"),
+    topEntriesByCurrency(
+      sales.map((item) => ({
+        label: item.name,
+        value: item.profit,
+        currency: item.currency,
+        color: item.profit < 0 ? "red" : "green",
+      })),
+      8,
+      (left, right) => Math.abs(right.value) - Math.abs(left.value),
+    ),
+    "profit",
+  );
+  const clientEntries = clients.flatMap((client) => {
+    const financials = clientFinancials(client);
+    return [...financials.owing.entries()].map(([currency, value]) => ({
+      label: `${client.name} · ${client.company_name || "No company"} · ${currency}`,
+      value,
+      currency,
+      color: "amber",
+    }));
+  }).filter((entry) => entry.value > 0);
+  const topClients = topEntriesByCurrency(clientEntries, 8);
+  renderCurrencyBarCharts($("#reports-client-chart"), topClients, "owing");
+  const rows = $("#reports-outstanding-rows");
+  rows.replaceChildren();
+  documents.filter((invoice) => invoiceTotal(invoice) > invoicePaidAmount(invoice) + 0.005)
+    .sort((left, right) => right.due_date.localeCompare(left.due_date))
+    .forEach((invoice) => {
+      const row = document.createElement("tr");
+      row.dataset.documentId = invoice.id;
+      row.tabIndex = 0;
+      appendText(row, "td", "", invoice.invoice_number);
+      appendText(row, "td", "", invoice.client_name);
+      appendText(row, "td", "", clientCompanyName(invoice) || "—");
+      appendText(row, "td", "", currencyAmount(invoiceTotal(invoice), invoice.currency));
+      appendText(row, "td", "", currencyAmount(invoicePaidAmount(invoice), invoice.currency));
+      appendText(row, "td", "", currencyAmount(Math.max(0, invoiceTotal(invoice) - invoicePaidAmount(invoice)), invoice.currency));
+      rows.append(row);
+    });
+}
+
 function renderAll() {
   updateBusinessSwitcher();
   renderOverview();
   renderBusinessDashboard();
   renderClients();
+  renderProducts();
+  renderReports();
   renderDocuments();
   populateClientPicker();
   setView(activeView);
@@ -714,7 +1114,7 @@ function populateClientPicker(selectedId = "") {
   businessClients(selectedBusinessId).forEach((client) => {
     const option = document.createElement("option");
     option.value = client.id;
-    option.textContent = client.name;
+    option.textContent = `${client.name} · ${client.company_name || "No company"}`;
     picker.append(option);
   });
   picker.value = selectedId;
@@ -723,6 +1123,7 @@ function populateClientPicker(selectedId = "") {
 function selectClient(clientId) {
   const client = clients.find((entry) => entry.id === clientId);
   $("#client-name").value = client?.name || "";
+  $("#client-company-name").value = client?.company_name || "";
   $("#client-email").value = client?.email || "";
   $("#client-address").value = client?.address || "";
   refreshNewInvoiceNumber();
@@ -752,22 +1153,31 @@ function populateProductOptions() {
   uniqueProducts.forEach((product) => {
     const option = document.createElement("option");
     option.value = product.name;
-    option.label = `${product.currency} ${Number(product.unit_price).toFixed(2)}`;
+    option.label = `${product.currency} ${Number(product.unit_price).toFixed(2)} · cost ${Number(product.unit_cost || 0).toFixed(2)}`;
     options.append(option);
   });
 }
 
-function applySavedProduct(descriptionInput, priceInput) {
+function applySavedProduct(descriptionInput, priceInput, row) {
   const currency = $("#currency").value.trim().toUpperCase();
   const product = businessProducts().find((entry) =>
     productNameKey(entry.name) === productNameKey(descriptionInput.value) && entry.currency === currency,
   );
-  if (product) priceInput.value = product.unit_price;
+  if (product) {
+    priceInput.value = product.unit_price;
+    row.dataset.productId = product.id;
+    row.dataset.unitCost = String(product.unit_cost || 0);
+  } else {
+    delete row.dataset.productId;
+    delete row.dataset.unitCost;
+  }
 }
 
 function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) {
   const row = document.createElement("div");
   row.className = "line-item";
+  row.dataset.productId = item.product_id || "";
+  row.dataset.unitCost = String(item.unit_cost ?? 0);
   const description = document.createElement("input");
   description.className = "line-input";
   description.type = "text";
@@ -812,9 +1222,9 @@ function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) 
     updateTotals();
     scheduleAutosave();
   });
-  description.addEventListener("change", () => applySavedProduct(description, price));
+  description.addEventListener("change", () => applySavedProduct(description, price, row));
   [description, quantity, price].forEach((input) => input.addEventListener("input", () => {
-    if (input === description) applySavedProduct(description, price);
+    if (input === description) applySavedProduct(description, price, row);
     updateTotals();
     scheduleAutosave();
   }));
@@ -830,6 +1240,8 @@ function formItems() {
       description: description.value.trim(),
       quantity: Number(quantity.value),
       unit_price: Number(unitPrice.value),
+      unit_cost: Number(row.dataset.unitCost || 0),
+      product_id: row.dataset.productId || null,
     };
   });
 }
@@ -874,7 +1286,11 @@ function renderEditorPreview() {
   $("#preview-from-name").textContent = business?.name || "Your business";
   $("#preview-from-contact").textContent = [business?.email, business?.address].filter(Boolean).join(" · ");
   $("#preview-client-name").textContent = $("#client-name").value.trim() || "Client name";
-  $("#preview-client-contact").textContent = [$("#client-email").value.trim(), $("#client-address").value.trim()].filter(Boolean).join(" · ");
+  $("#preview-client-contact").textContent = [
+    $("#client-company-name").value.trim(),
+    $("#client-email").value.trim(),
+    $("#client-address").value.trim(),
+  ].filter(Boolean).join(" · ");
   $("#preview-document-type").textContent = $("#invoice-type").value.toUpperCase();
   $("#preview-document-number").textContent = $("#invoice-number").value.trim() || "—";
   $("#preview-issue-date").textContent = formatDate($("#issue-date").value);
@@ -997,6 +1413,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#issue-date").value = invoice?.issue_date || today();
   $("#due-date").value = invoice?.due_date || today();
   $("#client-name").value = invoice?.client_name || "";
+  $("#client-company-name").value = invoice?.client_company_name || clients.find((client) => client.id === invoice?.client_id)?.company_name || "";
   $("#client-email").value = invoice?.client_email || "";
   $("#client-address").value = invoice?.client_address || "";
   $("#currency").value = invoice?.currency || "ZAR";
@@ -1010,7 +1427,14 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#invoice-number").value = invoice?.invoice_number || nextDocumentNumber(type, $("#issue-date").value);
   populateProductOptions();
   lineItems.replaceChildren();
-  (invoice?.items?.length ? invoice.items : [{ description: "", quantity: 1, unit_price: 0 }]).forEach(createLineItem);
+  (invoice?.items?.length ? invoice.items.map((item) => ({
+    ...item,
+    unit_cost: item.unit_cost ?? products.find((product) =>
+      product.business_id === invoice.business_id &&
+      product.currency === invoice.currency &&
+      productNameKey(product.name) === productNameKey(item.description),
+    )?.unit_cost ?? 0,
+  })) : [{ description: "", quantity: 1, unit_price: 0 }]).forEach(createLineItem);
   $("#invoice-status").querySelector('option[value="paid"]').disabled = $("#invoice-type").value === "quote";
   $("#due-date-label").textContent = $("#invoice-type").value === "quote" ? "Valid until" : "Due date";
   $("label[for='invoice-terms']").textContent = $("#invoice-type").value === "quote" ? "Estimate terms" : "Payment terms";
@@ -1054,12 +1478,14 @@ function invoiceFromForm() {
   const invoiceNumber = $("#invoice-number").value.trim();
   const business = currentBusiness();
   const clientName = $("#client-name").value.trim();
-  if (!invoiceNumber || !business || !clientName) throw new Error("Document number, business, and client name are required.");
+  const clientCompanyName = $("#client-company-name").value.trim();
+  if (!invoiceNumber || !business || !clientName || !clientCompanyName) throw new Error("Document number, business, client name, and company name are required.");
   if (!$("#client-email").checkValidity()) throw new Error("Enter a valid email address for the client.");
   const selectedClient = clients.find((client) => client.id === $("#client-picker").value);
   return {
     business_id: business.id,
     client_id: selectedClient?.id || null,
+    client_company_name: clientCompanyName,
     document_type: $("#invoice-type").value,
     invoice_number: invoiceNumber,
     issuer_name: business.name,
@@ -1083,12 +1509,15 @@ function invoiceFromForm() {
 
 async function findOrSaveClient(invoice) {
   const existing = clients.find((client) =>
-    client.business_id === invoice.business_id && client.name.toLowerCase() === invoice.client_name.toLowerCase(),
+    client.business_id === invoice.business_id &&
+    client.name.toLowerCase() === invoice.client_name.toLowerCase() &&
+    (client.company_name || "").toLowerCase() === invoice.client_company_name.toLowerCase(),
   );
   const clientValues = {
     user_id: currentUser.id,
     business_id: invoice.business_id,
     name: invoice.client_name,
+    company_name: invoice.client_company_name,
     email: invoice.client_email,
     address: invoice.client_address,
   };
@@ -1115,6 +1544,7 @@ async function saveProducts(invoice) {
       business_id: invoice.business_id,
       name: item.description,
       unit_price: item.unit_price,
+      unit_cost: existing ? existing.unit_cost : item.unit_cost || 0,
       currency: invoice.currency,
     };
     const query = existing
@@ -1200,7 +1630,7 @@ async function saveInvoice({ automatic = false } = {}) {
   }
 }
 
-function renderPrint(invoice) {
+function renderPrint(invoice, print = true) {
   printView.replaceChildren();
   const page = document.createElement("article");
   page.className = "print-invoice";
@@ -1233,6 +1663,7 @@ function renderPrint(invoice) {
   const billTo = document.createElement("div");
   appendText(billTo, "span", "print-label", "Billed to");
   appendText(billTo, "p", "", invoice.client_name);
+  if (clientCompanyName(invoice)) appendText(billTo, "p", "", clientCompanyName(invoice));
   if (invoice.client_email) appendText(billTo, "p", "", invoice.client_email);
   if (invoice.client_address) appendText(billTo, "p", "", invoice.client_address);
   details.append(from, billTo);
@@ -1332,8 +1763,10 @@ function renderPrint(invoice) {
   }
   appendText(page, "p", "print-thanks", "Thank you for your business.");
   printView.append(page);
-  document.body.classList.add("printing");
-  window.print();
+  if (print) {
+    document.body.classList.add("printing");
+    window.print();
+  }
 }
 
 function pdfSafeText(value) {
@@ -1350,7 +1783,7 @@ async function downloadInvoicePdf(invoice) {
   const left = 52;
   const right = width - 52;
   let y = 785;
-  const green = rgb(0.19, 0.36, 0.27);
+  const green = rgb(0.03, 0.53, 0.79);
 
   const draw = (text, x, top, options = {}) => {
     const value = pdfSafeText(text);
@@ -1359,7 +1792,7 @@ async function downloadInvoicePdf(invoice) {
       y: top - (options.size || 10),
       size: options.size || 10,
       font: options.bold ? bold : font,
-      color: options.color || rgb(0.16, 0.18, 0.16),
+      color: options.color || rgb(0, 0, 0),
       maxWidth: options.maxWidth,
       lineHeight: options.lineHeight || 14,
     });
@@ -1416,7 +1849,7 @@ async function downloadInvoicePdf(invoice) {
   y -= 16;
   const fromLines = [invoice.issuer_name, invoice.issuer_email, invoice.issuer_address].filter(Boolean)
     .flatMap((entry) => wrapLines(entry, 220, 10));
-  const clientLines = [invoice.client_name, invoice.client_email, invoice.client_address].filter(Boolean)
+  const clientLines = [invoice.client_name, invoice.client_company_name, invoice.client_email, invoice.client_address].filter(Boolean)
     .flatMap((entry) => wrapLines(entry, 220, 10));
   const contactHeight = Math.max(fromLines.length, clientLines.length) * 14;
   ensureSpace(contactHeight + 52);
@@ -1612,13 +2045,7 @@ async function applyPayment(event) {
     const savedInvoice = paymentInvoice;
     const loaded = await loadWorkspace();
     $("#payment-dialog").close();
-    const message = activeView === "dashboard"
-      ? $("#dashboard-message")
-      : activeView === "overview"
-        ? $("#overview-message")
-        : activeView === "editor"
-          ? $("#editor-message")
-          : $("#business-message");
+    const message = activeMessage();
     if (statusError) {
       showMessage(message, `Payment saved, but invoice status could not be updated: ${statusError.message}`);
     } else if (!loaded) {
@@ -1633,20 +2060,96 @@ async function applyPayment(event) {
   }
 }
 
-async function handleDocumentAction(event) {
-  const button = event.target.closest("button[data-action]");
-  if (!button) return;
-  const invoice = invoices.find((item) => item.id === button.dataset.id);
-  if (!invoice) return;
-  if (button.dataset.action === "send") {
-    const message = activeView === "dashboard" ? $("#dashboard-message") : $("#business-message");
+function activeMessage() {
+  const selectors = {
+    dashboard: "#dashboard-message",
+    business: "#business-message",
+    overview: "#overview-message",
+    clients: "#clients-message",
+    products: "#products-message",
+    reports: "#reports-message",
+  };
+  return $(selectors[activeView] || "#overview-message");
+}
+
+function openDocumentDetails(invoice) {
+  detailInvoiceId = invoice.id;
+  $("#document-dialog-title").textContent = `${invoice.document_type === "quote" ? "Quote" : "Invoice"} ${invoice.invoice_number}`;
+  $("#document-dialog-message").textContent = "";
+  renderPrint(invoice, false);
+  const preview = $("#document-preview");
+  preview.replaceChildren(printView.firstElementChild.cloneNode(true));
+  $("#document-dialog").querySelector('[data-document-action="payment"]').hidden = invoice.document_type !== "invoice";
+  $("#document-dialog").querySelector('[data-document-action="convert"]').hidden = invoice.document_type !== "quote";
+  $("#document-dialog").showModal();
+}
+
+async function runDocumentAction(action, invoice, button) {
+  const message = activeMessage();
+  if (action === "edit") {
+    $("#document-dialog").close();
+    selectedBusinessId = invoice.business_id;
+    updateBusinessSwitcher();
+    showEditor(invoice);
+    return;
+  }
+  if (action === "print") {
+    $("#document-dialog").close();
+    renderPrint(invoice);
+    return;
+  }
+  if (action === "payment") {
+    $("#document-dialog").close();
+    openPaymentDialog(invoice);
+    return;
+  }
+  if (action === "delete") {
+    if (!window.confirm(`Delete ${invoice.document_type} ${invoice.invoice_number}? This cannot be undone.`)) return;
+    const { error } = await supabase.from("invoices").delete().eq("id", invoice.id);
+    if (error) {
+      showMessage($("#document-dialog-message"), `Could not delete document: ${error.message}`);
+      return;
+    }
+    $("#document-dialog").close();
+    await loadWorkspace();
+    showMessage(message, "Document deleted.", true);
+    return;
+  }
+  if (action === "convert" && invoice.document_type === "quote") {
+    const { error } = await supabase.from("invoices").update({
+      document_type: "invoice",
+      invoice_number: nextDocumentNumber("invoice", invoice.issue_date, invoice.client_id, invoice.business_id),
+      status: "draft",
+      terms: INVOICE_TERMS,
+    }).eq("id", invoice.id);
+    if (error) {
+      showMessage($("#document-dialog-message"), `Could not convert quote: ${error.message}`);
+      return;
+    }
+    $("#document-dialog").close();
+    await loadWorkspace();
+    showMessage(message, "Quote converted to a new draft invoice.", true);
+    return;
+  }
+  if (action === "pdf") {
+    button.disabled = true;
+    try {
+      await downloadInvoicePdf(invoice);
+      showMessage($("#document-dialog-message"), "PDF downloaded.", true);
+    } catch (error) {
+      showMessage($("#document-dialog-message"), error.message || "Could not create the PDF.");
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  if (action === "send") {
     if (!invoice.client_email) {
-      showMessage(message, "Add an email address to this client before sending the document.");
+      showMessage($("#document-dialog-message"), "Add an email address to this client before sending the document.");
       return;
     }
     button.disabled = true;
     button.textContent = "Sending...";
-    showMessage(message, "");
     try {
       const { data, error } = await supabase.functions.invoke("send-document-email", {
         body: { invoice_id: invoice.id },
@@ -1664,55 +2167,32 @@ async function handleDocumentAction(event) {
         throw new Error(details || "The email could not be sent.");
       }
       await loadWorkspace();
-      showMessage(message, data?.message || `PDF sent to ${invoice.client_email}.`, true);
+      showMessage($("#document-dialog-message"), data?.message || `PDF sent to ${invoice.client_email}.`, true);
     } catch (error) {
-      showMessage(message, error.message || "The email could not be sent.");
+      showMessage($("#document-dialog-message"), error.message || "The email could not be sent.");
     } finally {
       button.disabled = false;
       button.textContent = "Email PDF";
     }
-  } else if (button.dataset.action === "edit") {
-    selectedBusinessId = invoice.business_id;
-    updateBusinessSwitcher();
-    showEditor(invoice);
-  } else if (button.dataset.action === "print") {
-    renderPrint(invoice);
-  } else if (button.dataset.action === "pdf") {
-    const message = activeView === "dashboard" ? $("#dashboard-message") : $("#business-message");
-    button.disabled = true;
-    try {
-      await downloadInvoicePdf(invoice);
-      showMessage(message, "PDF downloaded.", true);
-    } catch (error) {
-      showMessage(message, error.message || "Could not create the PDF.");
-    } finally {
-      button.disabled = false;
+  }
+}
+
+async function handleDocumentAction(event) {
+  const button = event.target.closest("button[data-open-document]");
+  if (button) {
+    const invoice = invoices.find((item) => item.id === button.dataset.openDocument);
+    if (invoice) {
+      $("#client-documents-dialog").close();
+      openDocumentDetails(invoice);
     }
-  } else if (button.dataset.action === "payment") {
-    openPaymentDialog(invoice);
-  } else if (button.dataset.action === "convert" && invoice.document_type === "quote") {
-    const { error } = await supabase.from("invoices").update({
-      document_type: "invoice",
-      invoice_number: nextDocumentNumber("invoice", invoice.issue_date, invoice.client_id, invoice.business_id),
-      status: "draft",
-      terms: INVOICE_TERMS,
-    }).eq("id", invoice.id);
-    if (error) {
-      showMessage(activeView === "dashboard" ? $("#dashboard-message") : $("#business-message"), `Could not convert quote: ${error.message}`);
-      return;
-    }
-    await loadWorkspace();
-    const message = activeView === "dashboard" ? $("#dashboard-message") : $("#business-message");
-    showMessage(message, "Quote converted to a new draft invoice.", true);
-  } else if (button.dataset.action === "delete") {
-    if (!window.confirm(`Delete ${invoice.document_type} ${invoice.invoice_number}? This cannot be undone.`)) return;
-    const { error } = await supabase.from("invoices").delete().eq("id", invoice.id);
-    if (error) {
-      showMessage(activeView === "dashboard" ? $("#dashboard-message") : $("#business-message"), `Could not delete document: ${error.message}`);
-      return;
-    }
-    await loadWorkspace();
-    showMessage(activeView === "dashboard" ? $("#dashboard-message") : $("#business-message"), "Document deleted.", true);
+    return;
+  }
+  const row = event.target.closest("tr[data-document-id]");
+  if (!row) return;
+  const invoice = invoices.find((item) => item.id === row.dataset.documentId);
+  if (invoice) {
+    if (row.closest("#client-document-rows")) $("#client-documents-dialog").close();
+    openDocumentDetails(invoice);
   }
 }
 
@@ -1796,6 +2276,7 @@ function resetClientForm(client = null) {
   $("#client-form-title").textContent = client ? "Edit client" : "Add a client";
   $("#saved-client-business").value = client?.business_id || selectedBusinessId || businesses[0]?.id || "";
   $("#saved-client-name").value = client?.name || "";
+  $("#saved-client-company").value = client?.company_name || "";
   $("#saved-client-email").value = client?.email || "";
   $("#saved-client-phone").value = client?.phone || "";
   $("#saved-client-address").value = client?.address || "";
@@ -1810,6 +2291,7 @@ async function saveClient(event) {
   const values = {
     business_id: $("#saved-client-business").value,
     name: $("#saved-client-name").value.trim(),
+    company_name: $("#saved-client-company").value.trim(),
     email: $("#saved-client-email").value.trim() || null,
     phone: $("#saved-client-phone").value.trim() || null,
     address: $("#saved-client-address").value.trim() || null,
@@ -1825,6 +2307,81 @@ async function saveClient(event) {
   await loadWorkspace();
   setView("clients");
   showMessage($("#clients-message"), id ? "Client updated." : "Client saved.", true);
+}
+
+function resetProductForm(product = null) {
+  $("#product-form").reset();
+  $("#product-edit-id").value = product?.id || "";
+  $("#product-name").value = product?.name || "";
+  $("#product-currency").value = product?.currency || $("#currency").value || "ZAR";
+  $("#product-unit-price").value = product?.unit_price ?? "";
+  $("#product-unit-cost").value = product?.unit_cost ?? "";
+  $("#product-form-title").textContent = product ? "Edit product" : "Add a product";
+  $("#product-save").textContent = product ? "Save product changes" : "Save product";
+  $("#product-form-cancel").hidden = !product;
+  $("#product-name").focus();
+}
+
+async function saveProduct(event) {
+  event.preventDefault();
+  if (!currentBusiness() || !$("#product-form").reportValidity()) return;
+  const currency = $("#product-currency").value.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    showMessage($("#products-message"), "Enter a valid 3-letter currency code.");
+    return;
+  }
+  const editId = $("#product-edit-id").value;
+  const existing = products.find((product) =>
+    product.business_id === selectedBusinessId &&
+    product.currency === currency &&
+    productNameKey(product.name) === productNameKey($("#product-name").value),
+  );
+  const values = {
+    user_id: currentUser.id,
+    business_id: selectedBusinessId,
+    name: $("#product-name").value.trim(),
+    currency,
+    unit_price: Number($("#product-unit-price").value),
+    unit_cost: Number($("#product-unit-cost").value),
+  };
+  if (values.unit_price < 0 || values.unit_cost < 0) {
+    showMessage($("#products-message"), "Product price and cost cannot be negative.");
+    return;
+  }
+  const targetId = editId || existing?.id;
+  const result = targetId
+    ? await supabase.from("products").update(values).eq("id", targetId).select().single()
+    : await supabase.from("products").insert(values).select().single();
+  if (result.error) {
+    showMessage($("#products-message"), `Could not save product: ${result.error.message}`);
+    return;
+  }
+  await loadWorkspace();
+  resetProductForm();
+  showMessage($("#products-message"), editId || existing ? "Product updated." : "Product added.", true);
+}
+
+function handleProductAction(event) {
+  const button = event.target.closest("button[data-product-action]");
+  if (!button) return;
+  const product = products.find((entry) => entry.id === button.dataset.productId);
+  if (!product) return;
+  if (button.dataset.productAction === "edit") {
+    resetProductForm(product);
+    return;
+  }
+  if (button.dataset.productAction === "new-invoice") {
+    startNewDocument("invoice");
+    lineItems.replaceChildren();
+    createLineItem({
+      description: product.name,
+      quantity: 1,
+      unit_price: product.unit_price,
+      unit_cost: product.unit_cost,
+      product_id: product.id,
+    });
+    scheduleAutosave();
+  }
 }
 
 async function handleAuth(event) {
@@ -1867,6 +2424,15 @@ $("#nav-business").addEventListener("click", () => {
   else setView("business");
 });
 $("#nav-clients").addEventListener("click", () => setView("clients"));
+$("#nav-products").addEventListener("click", () => {
+  if (!currentBusiness()) {
+    setView("overview");
+    showMessage($("#overview-message"), "Create a business profile before managing products.");
+    return;
+  }
+  setView("products");
+});
+$("#nav-reports").addEventListener("click", () => setView("reports"));
 $("#nav-documents").addEventListener("click", () => {
   if (!currentBusiness()) setView("overview");
   else setView("dashboard");
@@ -1925,6 +2491,12 @@ $("#cancel-client").addEventListener("click", () => { $("#client-form-panel").hi
 $("#client-form").addEventListener("submit", saveClient);
 $("#client-search").addEventListener("input", renderClients);
 $("#client-card-grid").addEventListener("click", (event) => {
+  const documentsButton = event.target.closest("[data-client-documents]");
+  if (documentsButton) {
+    const client = clients.find((entry) => entry.id === documentsButton.dataset.clientDocuments);
+    if (client) openClientDocuments(client);
+    return;
+  }
   const button = event.target.closest("[data-edit-client]");
   if (!button) return;
   const client = clients.find((entry) => entry.id === button.dataset.editClient);
@@ -1936,6 +2508,12 @@ $("#client-name").addEventListener("input", () => {
   if (selected && selected.name !== $("#client-name").value.trim()) {
     $("#client-picker").value = "";
     refreshNewInvoiceNumber();
+  }
+});
+$("#client-company-name").addEventListener("input", () => {
+  const selected = clients.find((client) => client.id === $("#client-picker").value);
+  if (selected && selected.company_name !== $("#client-company-name").value.trim()) {
+    $("#client-picker").value = "";
   }
 });
 $("#invoice-type").addEventListener("change", updateTypeFields);
@@ -1950,6 +2528,32 @@ $("#business-search").addEventListener("input", (event) => {
 });
 $("#business-document-rows").addEventListener("click", handleDocumentAction);
 $("#invoice-rows").addEventListener("click", handleDocumentAction);
+$("#reports-outstanding-rows").addEventListener("click", handleDocumentAction);
+$("#client-document-rows").addEventListener("click", handleDocumentAction);
+$("#reports-outstanding-rows").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") handleDocumentAction(event);
+});
+["invoice-rows", "business-document-rows", "client-document-rows"].forEach((id) => {
+  $(`#${id}`).addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") handleDocumentAction(event);
+  });
+});
+$("#document-dialog").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-document-action]");
+  if (!button) return;
+  const invoice = invoices.find((entry) => entry.id === detailInvoiceId);
+  if (invoice) runDocumentAction(button.dataset.documentAction, invoice, button);
+});
+$("#document-dialog-close").addEventListener("click", () => $("#document-dialog").close());
+$("#client-documents-close").addEventListener("click", () => $("#client-documents-dialog").close());
+$("#product-form").addEventListener("submit", saveProduct);
+$("#product-form-cancel").addEventListener("click", () => resetProductForm());
+$("#product-search").addEventListener("input", renderProducts);
+$("#product-rows").addEventListener("click", handleProductAction);
+$("#product-sales-rows").addEventListener("click", handleDocumentAction);
+$("#product-sales-rows").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") handleDocumentAction(event);
+});
 $("#preview-apply-payment").addEventListener("click", () => {
   const invoice = invoices.find((entry) => entry.id === editingId);
   if (invoice) openPaymentDialog(invoice);

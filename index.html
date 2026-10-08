@@ -48,6 +48,8 @@
           <button class="nav-button" id="nav-business" type="button">Business</button>
           <button class="nav-button" id="nav-documents" type="button">Documents</button>
           <button class="nav-button" id="nav-clients" type="button">Clients</button>
+          <button class="nav-button" id="nav-products" type="button">Products</button>
+          <button class="nav-button" id="nav-reports" type="button">Reports</button>
         </nav>
         <div class="account-area">
           <select id="business-switcher" class="business-switcher" aria-label="Select business"></select>
@@ -78,9 +80,9 @@
           <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Document status</h2><p class="muted">Your quotes and invoices at a glance.</p></div></div><div id="overview-status-chart" class="status-chart"></div></section>
         </div>
         <div class="business-period-grid">
-          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Today</h2><p class="muted">Documents issued by business today.</p></div></div><div id="overview-business-today-chart" class="period-chart-list"></div></section>
-          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>This month</h2><p class="muted">Documents issued by business this month.</p></div></div><div id="overview-business-month-chart" class="period-chart-list"></div></section>
-          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>This year</h2><p class="muted">Documents issued by business this year.</p></div></div><div id="overview-business-year-chart" class="business-chart"></div></section>
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Today</h2><p class="muted">Invoice sales this week · MTWTFSS.</p></div></div><div id="overview-business-today-chart" class="period-chart-list"></div></section>
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>This month</h2><p class="muted">Monthly invoice sales for this year · JFMAMJJASOND.</p></div></div><div id="overview-business-month-chart" class="period-chart-list"></div></section>
+          <section class="panel analytics-panel"><div class="panel-heading"><div><h2>This year</h2><p class="muted">Top customer companies by invoice value.</p></div></div><div id="overview-business-year-chart" class="business-chart"></div></section>
         </div>
         <section class="panel business-list-panel">
           <div class="panel-heading"><div><h2>Your businesses</h2><p class="muted">Open a business to view its dashboard.</p></div><button class="text-button" id="overview-add-business" type="button">+ Add business</button></div>
@@ -111,7 +113,7 @@
         </div>
         <section class="panel invoice-panel">
           <div class="panel-heading"><div><h2>Business documents</h2><p class="muted">Quotes and invoices for this business.</p></div><label class="search-box" for="business-search"><span aria-hidden="true">⌕</span><input id="business-search" type="search" placeholder="Search documents..." autocomplete="off"></label></div>
-          <div class="table-scroll"><table><thead><tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody id="business-document-rows"></tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT / COMPANY</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th></tr></thead><tbody id="business-document-rows"></tbody></table></div>
           <div class="empty-state" id="business-documents-empty" hidden><span class="empty-icon" aria-hidden="true">▤</span><h3>No documents yet</h3><p>Create a quote or invoice for this business to get started.</p><button class="button button-primary" id="business-empty-new" type="button">Create a document <span aria-hidden="true">→</span></button></div>
         </section>
         <p class="page-footnote">Your business data is securely synced to your account.</p>
@@ -129,7 +131,8 @@
           <form id="client-form" class="client-form-grid">
             <input id="client-edit-id" type="hidden">
             <div class="form-field"><label for="saved-client-business">Business</label><select id="saved-client-business" required></select></div>
-            <div class="form-field"><label for="saved-client-name">Client or company name</label><input id="saved-client-name" maxlength="160" required></div>
+            <div class="form-field"><label for="saved-client-name">Client name</label><input id="saved-client-name" maxlength="160" required></div>
+            <div class="form-field"><label for="saved-client-company">Company name</label><input id="saved-client-company" maxlength="160" required></div>
             <div class="form-field"><label for="saved-client-email">Email address <span class="optional">OPTIONAL</span></label><input id="saved-client-email" type="email" maxlength="254"></div>
             <div class="form-field"><label for="saved-client-phone">Phone <span class="optional">OPTIONAL</span></label><input id="saved-client-phone" maxlength="60"></div>
             <div class="form-field field-full"><label for="saved-client-address">Billing address <span class="optional">OPTIONAL</span></label><textarea id="saved-client-address" rows="3" maxlength="1000"></textarea></div>
@@ -207,7 +210,7 @@
           <div class="table-scroll">
             <table>
               <thead>
-                <tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
+                <tr><th scope="col">TYPE</th><th scope="col">NUMBER</th><th scope="col">CLIENT / COMPANY</th><th scope="col">ISSUED</th><th scope="col">DUE DATE</th><th scope="col">TOTAL</th><th scope="col">STATUS</th></tr>
               </thead>
               <tbody id="invoice-rows"></tbody>
             </table>
@@ -219,7 +222,6 @@
             <button class="button button-primary" id="empty-new-invoice" type="button">Create a document <span aria-hidden="true">→</span></button>
           </div>
         </section>
-        <p class="page-footnote">Your data is securely synced to your account.</p>
       </section>
 
       <section id="editor-view" class="page-wrap editor-wrap" hidden>
@@ -254,7 +256,8 @@
               <div class="section-title"><span class="section-number">02</span><div><h2>Bill to</h2><p class="muted">Client details are saved to this business automatically.</p></div></div>
               <div class="form-grid form-grid-two">
                 <div class="form-field field-full"><label for="client-picker">Choose a saved client <span class="optional">OPTIONAL</span></label><select id="client-picker"><option value="">Enter client details manually</option></select></div>
-                <div class="form-field"><label for="client-name">Client or company name</label><input id="client-name" name="client_name" placeholder="e.g. Acme Studio" maxlength="160" required></div>
+                <div class="form-field"><label for="client-name">Client name</label><input id="client-name" name="client_name" placeholder="e.g. Thandi Mokoena" maxlength="160" required></div>
+                <div class="form-field"><label for="client-company-name">Company name</label><input id="client-company-name" name="client_company_name" placeholder="e.g. Acme Studio" maxlength="160" required></div>
                 <div class="form-field"><label for="client-email">Email address <span class="optional">OPTIONAL</span></label><input id="client-email" name="client_email" type="email" placeholder="accounts@client.com" maxlength="254"></div>
                 <div class="form-field field-full"><label for="client-address">Billing address <span class="optional">OPTIONAL</span></label><textarea id="client-address" name="client_address" rows="3" maxlength="1000" placeholder="Street address, city, postal code"></textarea></div>
               </div>
@@ -312,6 +315,83 @@
         </form>
         <div class="mobile-save-bar"><button class="button button-secondary" id="mobile-cancel" type="button">Cancel</button><button class="button button-secondary" id="mobile-download-pdf" type="button">PDF</button><button class="button button-primary" id="mobile-save" type="button">Save document <span aria-hidden="true">→</span></button></div>
       </section>
+
+        <section id="products-view" class="page-wrap" hidden>
+          <div class="page-heading"><div><span class="eyebrow">PRODUCTS & PROFIT</span><h1>Products</h1><p class="muted">Track what you sell, who buys it, and profit after unit costs.</p></div></div>
+          <p class="form-message" id="products-message" role="status" aria-live="polite"></p>
+          <div class="summary-grid summary-grid-four">
+            <article class="summary-card"><span class="summary-label">Products</span><strong class="summary-value" id="products-count">0</strong><span class="summary-hint">In this business</span></article>
+            <article class="summary-card"><span class="summary-label">Units sold</span><strong class="summary-value" id="products-units-sold">0</strong><span class="summary-hint">From invoices</span></article>
+            <article class="summary-card"><span class="summary-label">Sales</span><strong class="summary-value" id="products-sales-total">R 0.00</strong><span class="summary-hint">Invoiced product revenue</span></article>
+            <article class="summary-card"><span class="summary-label">Gross profit</span><strong class="summary-value" id="products-profit-total">R 0.00</strong><span class="summary-hint">Sales less recorded unit costs</span></article>
+          </div>
+          <div class="analytics-grid">
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Best sellers</h2><p class="muted">Ranked by quantity sold.</p></div></div><div id="products-bestseller-chart" class="business-chart"></div></section>
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Profit by product</h2><p class="muted">Positive profit and negative product margins are shown separately.</p></div></div><div id="products-profit-chart" class="business-chart"></div></section>
+          </div>
+          <section class="panel client-form-panel">
+            <div class="panel-heading"><div><h2 id="product-form-title">Add a product</h2><p class="muted">Set a selling price and your cost per unit.</p></div><button class="row-action" id="product-form-cancel" type="button" hidden>Cancel edit</button></div>
+            <form id="product-form" class="client-form-grid">
+              <input id="product-edit-id" type="hidden">
+              <div class="form-field"><label for="product-name">Product name</label><input id="product-name" maxlength="240" required></div>
+              <div class="form-field"><label for="product-currency">Currency</label><input id="product-currency" value="ZAR" maxlength="3" pattern="[A-Za-z]{3}" required></div>
+              <div class="form-field"><label for="product-unit-price">Selling price per unit</label><input id="product-unit-price" type="number" min="0" step="0.01" required></div>
+              <div class="form-field"><label for="product-unit-cost">Cost per unit</label><input id="product-unit-cost" type="number" min="0" step="0.01" required></div>
+              <div class="client-form-actions field-full"><button class="button button-primary" id="product-save" type="submit">Save product</button></div>
+            </form>
+          </section>
+          <section class="panel invoice-panel">
+            <div class="panel-heading"><div><h2>Product catalogue & sales</h2><p class="muted">Sales rows show the customer, quantity, revenue, cost, and gross profit.</p></div><label class="search-box" for="product-search"><span aria-hidden="true">⌕</span><input id="product-search" type="search" placeholder="Search products..." autocomplete="off"></label></div>
+            <div class="table-scroll"><table><thead><tr><th>PRODUCT</th><th>QTY SOLD</th><th>BUYERS</th><th>SALES</th><th>COST</th><th>GROSS PROFIT</th><th>ACTIONS</th></tr></thead><tbody id="product-rows"></tbody></table></div>
+            <div class="empty-state" id="products-empty" hidden><h3>No products yet</h3><p>Add a product above or save a new invoice to populate the catalogue.</p></div>
+          </section>
+          <section class="panel invoice-panel product-transactions-panel">
+            <div class="panel-heading"><div><h2>Sales by customer</h2><p class="muted">Each invoiced product sale, buyer, revenue, cost, and gross profit.</p></div></div>
+            <div class="table-scroll"><table><thead><tr><th>PRODUCT</th><th>DOCUMENT</th><th>CLIENT</th><th>COMPANY</th><th>QTY</th><th>SALES</th><th>COST</th><th>GROSS PROFIT</th></tr></thead><tbody id="product-sales-rows"></tbody></table></div>
+            <div class="empty-state" id="product-sales-empty" hidden><h3>No product sales yet</h3><p>Product sales will appear here when you save invoices.</p></div>
+          </section>
+        </section>
+
+        <section id="reports-view" class="page-wrap" hidden>
+          <div class="page-heading"><div><span class="eyebrow">BUSINESS INTELLIGENCE</span><h1>Reports</h1><p class="muted">Workspace-wide sales, collections, client balances, and product margins.</p></div></div>
+          <p class="form-message" id="reports-message" role="status" aria-live="polite"></p>
+          <div class="summary-grid summary-grid-four">
+            <article class="summary-card"><span class="summary-label">Invoiced</span><strong class="summary-value" id="reports-invoiced">R 0.00</strong><span class="summary-hint">All invoice totals</span></article>
+            <article class="summary-card"><span class="summary-label">Collected</span><strong class="summary-value" id="reports-collected">R 0.00</strong><span class="summary-hint">Payments recorded</span></article>
+            <article class="summary-card"><span class="summary-label">Outstanding</span><strong class="summary-value" id="reports-outstanding">R 0.00</strong><span class="summary-hint">Invoice balances due</span></article>
+            <article class="summary-card"><span class="summary-label">Gross profit</span><strong class="summary-value" id="reports-profit">R 0.00</strong><span class="summary-hint">Sales less product costs</span></article>
+          </div>
+          <div class="analytics-grid">
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Monthly invoiced sales</h2><p class="muted">Current year, all businesses.</p></div></div><div id="reports-monthly-chart" class="business-chart"></div></section>
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Top customer companies</h2><p class="muted">Ranked by invoice value this year.</p></div></div><div id="reports-company-chart" class="business-chart"></div></section>
+          </div>
+          <div class="analytics-grid">
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Product profit and loss</h2><p class="muted">Highest profit or loss by product.</p></div></div><div id="reports-product-chart" class="business-chart"></div></section>
+            <section class="panel analytics-panel"><div class="panel-heading"><div><h2>Client balances</h2><p class="muted">Paid and still owing by client and company.</p></div></div><div id="reports-client-chart" class="business-chart"></div></section>
+          </div>
+          <section class="panel invoice-panel"><div class="panel-heading"><div><h2>Outstanding invoices</h2><p class="muted">Open a document to review, edit, or email it.</p></div></div><div class="table-scroll"><table><thead><tr><th>DOCUMENT</th><th>CLIENT</th><th>COMPANY</th><th>INVOICE TOTAL</th><th>PAID</th><th>OWING</th></tr></thead><tbody id="reports-outstanding-rows"></tbody></table></div></section>
+        </section>
+
+        <dialog id="document-dialog" class="document-dialog" aria-labelledby="document-dialog-title">
+          <div class="document-dialog-heading"><div><span class="eyebrow">DOCUMENT PREVIEW</span><h2 id="document-dialog-title"></h2></div><button class="dialog-close" id="document-dialog-close" type="button" aria-label="Close document preview">×</button></div>
+          <div id="document-preview"></div>
+          <p class="form-message" id="document-dialog-message" role="status" aria-live="polite"></p>
+          <div class="document-dialog-actions">
+            <button class="button button-secondary" data-document-action="edit" type="button">Edit</button>
+            <button class="button button-secondary" data-document-action="pdf" type="button">Download PDF</button>
+            <button class="button button-secondary" data-document-action="print" type="button">Print</button>
+            <button class="button button-secondary" data-document-action="send" type="button">Email PDF</button>
+            <button class="button button-secondary" data-document-action="payment" type="button">Apply payment</button>
+            <button class="button button-secondary" data-document-action="convert" type="button" hidden>Convert to invoice</button>
+            <button class="button button-secondary button-danger" data-document-action="delete" type="button">Delete</button>
+          </div>
+        </dialog>
+
+        <dialog id="client-documents-dialog" class="document-dialog" aria-labelledby="client-documents-title">
+          <div class="document-dialog-heading"><div><span class="eyebrow">CLIENT ACCOUNT</span><h2 id="client-documents-title"></h2></div><button class="dialog-close" id="client-documents-close" type="button" aria-label="Close client documents">×</button></div>
+          <div id="client-document-summary" class="client-balance-summary"></div>
+          <div class="table-scroll"><table><thead><tr><th>DOCUMENT</th><th>TYPE</th><th>ISSUED</th><th>TOTAL</th><th>PAID</th><th>OWING</th><th>ACTION</th></tr></thead><tbody id="client-document-rows"></tbody></table></div>
+        </dialog>
 
         <dialog id="payment-dialog" class="payment-dialog" aria-labelledby="payment-dialog-title">
           <form id="payment-form">
