@@ -156,6 +156,18 @@ td:first-child { color: #29372e; font-weight: 700; }
 .chart-dot.violet { background: #8978bc; }
 .chart-dot.blue { background: #6b9cc0; }
 .chart-empty { margin: 0; padding: 7px 0; color: #969d95; font-size: 11px; line-height: 1.6; }
+.period-chart-list { display: grid; gap: 18px; padding: 2px 18px 20px; }
+.period-business-chart { min-width: 0; }
+.period-business-name { margin-bottom: 7px; overflow: hidden; color: #687067; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.period-bars-scroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-color: #d9dfd9 transparent; scrollbar-width: thin; }
+.period-bars { display: grid; min-width: max-content; grid-auto-columns: minmax(18px, 1fr); grid-auto-flow: column; align-items: end; gap: 4px; min-height: 78px; padding: 2px 0 0; }
+.period-bar-day { display: grid; width: 100%; min-width: 18px; grid-template-rows: 60px 12px; justify-items: center; align-items: end; }
+.period-bar { display: block; width: 100%; max-height: 58px; align-self: end; border-radius: 4px 4px 1px 1px; transition: height .2s ease, background-color .2s ease; }
+.period-bar-muted { background: #dfe4e0; }
+.period-bar-today { background: #27b7c6; }
+.period-bar-current-month { background: #d844a5; }
+.period-bar-empty { opacity: .35; }
+.period-bar-label { color: #899087; font-size: 8px; line-height: 12px; }
 .business-list-panel { margin-top: 18px; }
 .business-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 0 22px 22px; }
 .business-card { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; padding: 15px; border: 1px solid #edf0ec; border-radius: 11px; background: #fff; }

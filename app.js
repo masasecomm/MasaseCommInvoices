@@ -310,6 +310,70 @@ function businessDocumentsByPeriod(period) {
   }));
 }
 
+function isoDate(date) {
+  const localDate = new Date(date);
+  localDate.setMinutes(localDate.getMinutes() - localDate.getTimezoneOffset());
+  return localDate.toISOString().slice(0, 10);
+}
+
+function addDaysToIsoDate(value, days) {
+  const [year, month, day] = value.split("-").map(Number);
+  return isoDate(new Date(year, month - 1, day + days));
+}
+
+function renderBusinessPeriodCharts(container, startDate, endDate, highlightDate, highlightClass, highlightFromDate = "") {
+  container.replaceChildren();
+  if (!businesses.length) {
+    appendText(container, "p", "chart-empty", "Add businesses and documents to see daily activity here.");
+    return;
+  }
+
+  const dates = [];
+  for (let date = startDate; date <= endDate; date = addDaysToIsoDate(date, 1)) dates.push(date);
+
+  businesses.forEach((business) => {
+    const section = document.createElement("section");
+    section.className = "period-business-chart";
+    appendText(section, "h3", "period-business-name", business.name);
+    const chart = document.createElement("div");
+    chart.className = `period-bars ${dates.length > 7 ? "period-bars-long" : "period-bars-week"}`;
+    chart.setAttribute("role", "img");
+    chart.setAttribute("aria-label", `${business.name} documents issued per day`);
+    const documents = businessDocuments(business.id);
+    const countsByDate = new Map();
+    documents.forEach((invoice) => countsByDate.set(invoice.issue_date, (countsByDate.get(invoice.issue_date) || 0) + 1));
+    const counts = dates.map((date) => countsByDate.get(date) || 0);
+    const max = Math.max(1, ...counts);
+
+    dates.forEach((date, index) => {
+      const day = document.createElement("div");
+      day.className = "period-bar-day";
+      const value = counts[index];
+      const bar = document.createElement("span");
+      const highlighted = date === highlightDate || (highlightFromDate && date >= highlightFromDate);
+      bar.className = `period-bar ${highlighted ? highlightClass : "period-bar-muted"}`;
+      bar.style.height = `${value ? Math.max(5, value / max * 100) : 2}%`;
+      if (!value) bar.classList.add("period-bar-empty");
+      day.title = `${formatDate(date)} · ${value} ${value === 1 ? "document" : "documents"}`;
+      day.setAttribute("aria-label", day.title);
+      day.append(bar);
+      const label = document.createElement("span");
+      label.className = "period-bar-label";
+      label.textContent = date === startDate || date.slice(-2) === "01" || index % (dates.length > 14 ? 7 : 1) === 0
+        ? date.slice(-2)
+        : "";
+      day.append(label);
+      chart.append(day);
+    });
+
+    const track = document.createElement("div");
+    track.className = "period-bars-scroll";
+    track.append(chart);
+    section.append(track);
+    container.append(section);
+  });
+}
+
 function renderStatusChart(container, documents, includeQuotes = true) {
   const statuses = [
     { label: "Paid invoices", key: "paid", color: "green" },
@@ -359,8 +423,18 @@ function renderOverview() {
     color: "green",
   }));
   renderBarChart($("#overview-business-chart"), businessEntries);
-  renderBarChart($("#overview-business-today-chart"), businessDocumentsByPeriod("today"));
-  renderBarChart($("#overview-business-month-chart"), businessDocumentsByPeriod("month"));
+  
+  // Today chart: 7 days with today highlighted in cyan
+  const todayDate = today();
+  const sevenDaysAgo = addDaysToIsoDate(todayDate, -6);
+  renderBusinessPeriodCharts($("#overview-business-today-chart"), sevenDaysAgo, todayDate, todayDate, "period-bar-today");
+  
+  // Month chart: 3 months with current month in magenta
+  const firstDayThisMonth = todayDate.slice(0, 7) + "-01";
+  const threeMonthsAgo = addDaysToIsoDate(firstDayThisMonth, -61);
+  renderBusinessPeriodCharts($("#overview-business-month-chart"), threeMonthsAgo, todayDate, "", "period-bar-current-month", firstDayThisMonth);
+  
+  // Year chart: aggregated by business (keeping simple bar chart)
   renderBarChart($("#overview-business-year-chart"), businessDocumentsByPeriod("year"));
   renderStatusChart($("#overview-status-chart"), invoices);
 
