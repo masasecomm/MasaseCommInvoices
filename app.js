@@ -32,6 +32,8 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
 const CLIENT_FIELD_IDS = ["saved-client-name", "saved-client-email", "saved-client-phone", "saved-client-address"];
 const ALLOWED_ACCOUNT_EMAIL = "masasecomm@gmail.com";
+const INVOICE_TERMS = "Payment is due by the date shown on this invoice. Thank you for your business.";
+const QUOTE_TERMS = "This estimate is valid until the date shown. Work will begin after written acceptance.";
 
 let supabase;
 let currentUser;
@@ -39,10 +41,13 @@ let businesses = [];
 let clients = [];
 let products = [];
 let invoices = [];
+let payments = [];
 let selectedBusinessId = null;
 let activeView = "overview";
 let editingId = null;
 let editingBusinessId = null;
+let paymentInvoice = null;
+let termsDocumentType = "invoice";
 let pendingLogoFile = null;
 let autosaveTimer = null;
 let autosaveInProgress = false;
@@ -119,6 +124,9 @@ function refreshNewInvoiceNumber() {
 }
 
 function currencyAmount(amount, currency) {
+  if (currency === "ZAR") {
+    return `R ${new Intl.NumberFormat("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)}`;
+  }
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(amount);
   } catch {
@@ -155,6 +163,32 @@ function invoiceAmounts(invoice) {
 
 function invoiceTotal(invoice) {
   return invoiceAmounts(invoice).total;
+}
+
+function invoicePaidAmount(invoice, total = invoiceTotal(invoice)) {
+  const recorded = invoicePayments(invoice).reduce((sum, payment) => sum + Number(payment.amount), 0);
+  return Math.min(total, recorded || (invoice.status === "paid" ? total : 0));
+}
+
+function invoicePayments(invoice) {
+  return payments
+    .filter((payment) => payment.invoice_id === invoice.id)
+    .sort((left, right) => left.paid_at.localeCompare(right.paid_at) || (left.created_at || "").localeCompare(right.created_at || ""));
+}
+
+function invoicePaymentPercentage(invoice, total = invoiceTotal(invoice)) {
+  if (total <= 0) return 0;
+  return Math.round(invoicePaidAmount(invoice, total) / total * 1000) / 10;
+}
+
+function invoiceDisplayStatus(invoice) {
+  const paid = invoicePaidAmount(invoice);
+  const total = invoiceTotal(invoice);
+  return total > 0 && paid >= total - 0.005 ? "paid" : paid > 0 ? "partially paid" : invoice.status;
+}
+
+function defaultTerms(type) {
+  return type === "quote" ? QUOTE_TERMS : INVOICE_TERMS;
 }
 
 function setView(view) {
@@ -206,6 +240,7 @@ function setAuthenticated(user) {
     clients = [];
     products = [];
     invoices = [];
+    payments = [];
     selectedBusinessId = null;
     updateBusinessSwitcher();
     renderAll();
@@ -230,28 +265,31 @@ async function applyAuthSession(session) {
 
 async function loadWorkspace() {
   if (!currentUser || !supabase) return;
-  const [businessResult, clientResult, productResult, invoiceResult] = await Promise.all([
+  const [businessResult, clientResult, productResult, invoiceResult, paymentResult] = await Promise.all([
     supabase.from("businesses").select("*").order("created_at", { ascending: true }),
     supabase.from("clients").select("*").order("name", { ascending: true }),
     supabase.from("products").select("*").order("name", { ascending: true }),
     supabase.from("invoices").select("*").order("created_at", { ascending: false }),
+    supabase.from("invoice_payments").select("*").order("paid_at", { ascending: false }),
   ]);
-  const error = businessResult.error || clientResult.error || productResult.error || invoiceResult.error;
+  const error = businessResult.error || clientResult.error || productResult.error || invoiceResult.error || paymentResult.error;
   if (error) {
     showMessage($("#overview-message"), `Could not load workspace: ${error.message}. Apply the latest setup in supabase/schema.sql, then reload.`);
-    return;
+    return false;
   }
   const priorBusiness = selectedBusinessId;
   businesses = businessResult.data;
   clients = clientResult.data;
   products = productResult.data;
   invoices = invoiceResult.data;
+  payments = paymentResult.data;
   selectedBusinessId = businesses.some((business) => business.id === priorBusiness)
     ? priorBusiness
     : businesses[0]?.id || null;
   updateBusinessSwitcher();
   renderAll();
   populateProductOptions();
+  return true;
 }
 
 function appendText(parent, tag, className, text) {
@@ -485,13 +523,19 @@ function renderDocumentRows(container, documents) {
     const issue = appendText(row, "td", "", formatDate(invoice.issue_date));
     const due = appendText(row, "td", "", formatDate(invoice.due_date));
     const amount = appendText(row, "td", "", currencyAmount(invoiceTotal(invoice), invoice.currency));
+    const paid = invoicePaidAmount(invoice);
+    if (paid > 0 && invoice.document_type === "invoice") {
+      appendText(amount, "small", "document-payment-hint", `${invoicePaymentPercentage(invoice)}% paid`);
+    }
     const statusCell = document.createElement("td");
-    appendText(statusCell, "span", `status-pill status-${invoice.status}`, invoice.status);
+    const displayStatus = invoiceDisplayStatus(invoice);
+    appendText(statusCell, "span", `status-pill status-${displayStatus === "partially paid" ? "partial" : displayStatus}`, displayStatus);
     const actions = document.createElement("td");
     const buttons = document.createElement("div");
     buttons.className = "row-actions";
     const labels = [["Edit", "edit"], ["Download PDF", "pdf"], ["Print", "print"], ["Email PDF", "send"]];
     if (invoice.document_type === "quote") labels.push(["Convert", "convert"]);
+    if (invoice.document_type === "invoice") labels.push(["Apply payment", "payment"]);
     labels.push(["Delete", "delete"]);
     labels.forEach(([label, action]) => {
       const button = document.createElement("button");
@@ -526,8 +570,8 @@ function renderDocuments() {
     : "Create a quote or invoice for this business to manage from any device.";
   $("#empty-new-invoice").hidden = noSearchMatches || !selectedBusinessId;
   $("#stat-total").textContent = selected.length;
-  $("#stat-awaiting").textContent = selected.filter((document) => document.document_type === "invoice" && document.status === "sent").length;
-  $("#stat-paid").textContent = selected.filter((document) => document.document_type === "invoice" && document.status === "paid").length;
+  $("#stat-awaiting").textContent = selected.filter((document) => document.document_type === "invoice" && invoiceDisplayStatus(document) !== "paid").length;
+  $("#stat-paid").textContent = selected.filter((document) => document.document_type === "invoice" && invoiceDisplayStatus(document) === "paid").length;
 }
 
 function renderBusinessDocuments() {
@@ -690,11 +734,22 @@ function businessProducts(businessId = selectedBusinessId) {
   return products.filter((product) => product.business_id === businessId);
 }
 
+function productNameKey(name) {
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function populateProductOptions() {
   const options = $("#product-options");
   if (!options) return;
   options.replaceChildren();
-  businessProducts().forEach((product) => {
+  const uniqueProducts = new Map();
+  businessProducts()
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+    .forEach((product) => {
+      const key = `${productNameKey(product.name)}:${product.currency}`;
+      if (!uniqueProducts.has(key)) uniqueProducts.set(key, product);
+    });
+  uniqueProducts.forEach((product) => {
     const option = document.createElement("option");
     option.value = product.name;
     option.label = `${product.currency} ${Number(product.unit_price).toFixed(2)}`;
@@ -703,12 +758,11 @@ function populateProductOptions() {
 }
 
 function applySavedProduct(descriptionInput, priceInput) {
+  const currency = $("#currency").value.trim().toUpperCase();
   const product = businessProducts().find((entry) =>
-    entry.name.toLowerCase() === descriptionInput.value.trim().toLowerCase(),
+    productNameKey(entry.name) === productNameKey(descriptionInput.value) && entry.currency === currency,
   );
-  if (product && product.currency === $("#currency").value.trim().toUpperCase()) {
-    priceInput.value = product.unit_price;
-  }
+  if (product) priceInput.value = product.unit_price;
 }
 
 function createLineItem(item = { description: "", quantity: 1, unit_price: 0 }) {
@@ -838,6 +892,39 @@ function renderEditorPreview() {
     previewItems.append(row);
   });
   if (!previewItems.childElementCount) appendText(previewItems, "p", "preview-empty", "Your items will appear here.");
+  const savedInvoice = editingId ? invoices.find((invoice) => invoice.id === editingId) : null;
+  const paidAmount = savedInvoice ? invoicePaidAmount(savedInvoice, amounts.total) : 0;
+  const paidPercent = savedInvoice ? invoicePaymentPercentage(savedInvoice, amounts.total) : 0;
+  const paymentSummary = $("#preview-payment");
+  paymentSummary.replaceChildren();
+  paymentSummary.hidden = paidAmount <= 0;
+  if (paidAmount > 0) {
+    [
+      ["Paid", paidAmount],
+      ["Balance due", Math.max(0, amounts.total - paidAmount)],
+    ].forEach(([label, amount]) => {
+      const row = document.createElement("div");
+      appendText(row, "span", "", label);
+      appendText(row, "strong", "", currencyAmount(amount, currency));
+      paymentSummary.append(row);
+    });
+  }
+  const paymentHistory = $("#preview-payment-history");
+  paymentHistory.replaceChildren();
+  const paymentRecords = savedInvoice ? invoicePayments(savedInvoice) : [];
+  paymentHistory.hidden = paymentRecords.length === 0;
+  paymentRecords.forEach((payment) => {
+    const row = document.createElement("div");
+    appendText(row, "span", "", `${formatDate(payment.paid_at)}${payment.reference ? ` · ${payment.reference}` : ""}`);
+    appendText(row, "strong", "", currencyAmount(Number(payment.amount), currency));
+    paymentHistory.append(row);
+  });
+  const paymentStamp = $("#preview-payment-stamp");
+  paymentStamp.hidden = paidAmount <= 0;
+  paymentStamp.textContent = paidPercent >= 100 ? "PAID · 100%" : `PARTIALLY PAID · ${paidPercent}%`;
+  $("#preview-terms").textContent = $("#invoice-terms").value.trim();
+  const applyPayment = $("#preview-apply-payment");
+  applyPayment.hidden = !savedInvoice || savedInvoice.document_type !== "invoice";
   const summary = $("#preview-summary");
   summary.replaceChildren();
   [
@@ -869,9 +956,15 @@ function scheduleAutosave() {
 function updateTypeFields() {
   const type = $("#invoice-type").value;
   const isQuote = type === "quote";
+  const termsField = $("#invoice-terms");
+  if (termsDocumentType !== type && (!termsField.value.trim() || termsField.value === defaultTerms(termsDocumentType))) {
+    termsField.value = defaultTerms(type);
+  }
+  termsDocumentType = type;
   $("#editor-eyebrow").textContent = isQuote ? "NEW QUOTE" : "NEW INVOICE";
   $("#editor-title").textContent = `Create a ${type}`;
   $("#due-date-label").textContent = isQuote ? "Valid until" : "Due date";
+  $("label[for='invoice-terms']").textContent = isQuote ? "Estimate terms" : "Payment terms";
   $("#invoice-status").querySelector('option[value="paid"]').disabled = isQuote;
   if (isQuote && $("#invoice-status").value === "paid") $("#invoice-status").value = "sent";
   if (!editingId && !invoiceNumberManuallyEdited && isQuote) {
@@ -898,6 +991,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   editingId = invoice?.id || null;
   invoiceNumberManuallyEdited = Boolean(invoice);
   $("#invoice-type").value = invoice?.document_type || type;
+  termsDocumentType = $("#invoice-type").value;
   $("#editor-eyebrow").textContent = invoice ? `EDIT ${invoice.document_type.toUpperCase()}` : `NEW ${type.toUpperCase()}`;
   $("#editor-title").textContent = invoice ? `Edit ${invoice.document_type}` : `Create a ${type}`;
   $("#issue-date").value = invoice?.issue_date || today();
@@ -909,6 +1003,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   $("#tax-rate").value = invoice?.tax_rate ?? 0;
   $("#discount-type").value = invoice?.discount_type || "amount";
   $("#discount-value").value = invoice?.discount_value ?? 0;
+  $("#invoice-terms").value = invoice?.terms || defaultTerms(termsDocumentType);
   $("#invoice-notes").value = invoice?.notes || "";
   $("#invoice-status").value = invoice?.status || "draft";
   populateClientPicker(invoice?.client_id || "");
@@ -918,6 +1013,7 @@ function showEditor(invoice = null, type = invoice?.document_type || "invoice") 
   (invoice?.items?.length ? invoice.items : [{ description: "", quantity: 1, unit_price: 0 }]).forEach(createLineItem);
   $("#invoice-status").querySelector('option[value="paid"]').disabled = $("#invoice-type").value === "quote";
   $("#due-date-label").textContent = $("#invoice-type").value === "quote" ? "Valid until" : "Due date";
+  $("label[for='invoice-terms']").textContent = $("#invoice-type").value === "quote" ? "Estimate terms" : "Payment terms";
   $("#save-invoice").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   $("#mobile-save").innerHTML = `Save ${$("#invoice-type").value} <span aria-hidden="true">→</span>`;
   setView("editor");
@@ -943,6 +1039,15 @@ function invoiceFromForm() {
   }
   const amounts = calculateFormAmounts();
   if (amounts.taxable < 0) throw new Error("A positive discount cannot exceed the line-item subtotal. Use a negative amount for a surcharge.");
+  const existingInvoice = invoices.find((invoice) => invoice.id === editingId);
+  const existingPayments = existingInvoice ? invoicePayments(existingInvoice) : [];
+  const received = existingPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+  if (existingPayments.length && existingInvoice.currency !== $("#currency").value.trim().toUpperCase()) {
+    throw new Error("The currency cannot be changed after payments have been recorded.");
+  }
+  if (amounts.total + 0.005 < received) {
+    throw new Error("The invoice total cannot be less than the payments already recorded.");
+  }
   const issueDate = $("#issue-date").value;
   const dueDate = $("#due-date").value;
   if (!issueDate || !dueDate || dueDate < issueDate) throw new Error("The due date must be on or after the issue date.");
@@ -969,6 +1074,7 @@ function invoiceFromForm() {
     tax_rate: taxRate,
     discount_type: discountType,
     discount_value: discountValue,
+    terms: $("#invoice-terms").value.trim() || null,
     notes: $("#invoice-notes").value.trim() || null,
     status: $("#invoice-status").value,
     items,
@@ -1001,7 +1107,7 @@ async function saveProducts(invoice) {
   for (const item of invoice.items) {
     const existing = products.find((product) =>
       product.business_id === invoice.business_id &&
-      product.name.toLowerCase() === item.description.toLowerCase() &&
+      productNameKey(product.name) === productNameKey(item.description) &&
       product.currency === invoice.currency,
     );
     const productValues = {
@@ -1110,6 +1216,12 @@ function renderPrint(invoice) {
   appendText(title, "div", "print-number", invoice.invoice_number);
   header.append(title);
   page.append(header);
+  const amounts = invoiceAmounts(invoice);
+  const paidAmount = invoicePaidAmount(invoice, amounts.total);
+  const paidPercent = amounts.total > 0 ? Math.round(paidAmount / amounts.total * 1000) / 10 : 0;
+  if (paidAmount > 0) {
+    appendText(page, "div", "print-payment-stamp", paidPercent >= 100 ? "PAID · 100%" : `PARTIALLY PAID · ${paidPercent}%`);
+  }
 
   const details = document.createElement("section");
   details.className = "print-details";
@@ -1155,7 +1267,6 @@ function renderPrint(invoice) {
   table.append(body);
   page.append(table);
 
-  const amounts = invoiceAmounts(invoice);
   const summary = document.createElement("div");
   summary.className = "print-summary";
   const subtotalRow = document.createElement("div");
@@ -1178,6 +1289,40 @@ function renderPrint(invoice) {
   appendText(totalRow, "strong", "", currencyAmount(amounts.total, invoice.currency));
   summary.append(totalRow);
   page.append(summary);
+  if (paidAmount > 0) {
+    const paymentDetails = document.createElement("section");
+    paymentDetails.className = "print-payment-details";
+    [
+      ["Amount paid", paidAmount],
+      ["Balance due", Math.max(0, amounts.total - paidAmount)],
+    ].forEach(([label, amount]) => {
+      const row = document.createElement("div");
+      appendText(row, "span", "", label);
+      appendText(row, "strong", "", currencyAmount(amount, invoice.currency));
+      paymentDetails.append(row);
+    });
+    const records = invoicePayments(invoice);
+    if (records.length) {
+      const history = document.createElement("div");
+      history.className = "print-payment-history";
+      appendText(history, "span", "print-label", "Payment history");
+      records.forEach((payment) => {
+        const row = document.createElement("div");
+        appendText(row, "span", "", `${formatDate(payment.paid_at)}${payment.reference ? ` · ${payment.reference}` : ""}`);
+        appendText(row, "strong", "", currencyAmount(Number(payment.amount), invoice.currency));
+        history.append(row);
+      });
+      paymentDetails.append(history);
+    }
+    page.append(paymentDetails);
+  }
+  if (invoice.terms) {
+    const terms = document.createElement("section");
+    terms.className = "print-terms";
+    appendText(terms, "span", "print-label", invoice.document_type === "quote" ? "Estimate terms" : "Payment terms");
+    appendText(terms, "p", "", invoice.terms);
+    page.append(terms);
+  }
   if (invoice.notes) {
     const notes = document.createElement("section");
     notes.className = "print-notes";
@@ -1256,6 +1401,13 @@ async function downloadInvoicePdf(invoice) {
   y -= 30;
   draw(invoice.invoice_number, right - 120, y, { size: 11 });
   y -= 18;
+  const amounts = invoiceAmounts(invoice);
+  const paidAmount = invoicePaidAmount(invoice, amounts.total);
+  const paidPercent = amounts.total > 0 ? Math.round(paidAmount / amounts.total * 1000) / 10 : 0;
+  if (paidAmount > 0) {
+    draw(paidPercent >= 100 ? "PAID · 100%" : `PARTIALLY PAID · ${paidPercent}%`, right - 150, y, { size: 9, bold: true, color: green });
+    y -= 17;
+  }
   page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 2, color: green });
   y -= 30;
 
@@ -1301,11 +1453,11 @@ async function downloadInvoicePdf(invoice) {
     page.drawLine({ start: { x: left, y: y + 5 }, end: { x: right, y: y + 5 }, thickness: 0.5, color: rgb(0.9, 0.91, 0.9) });
   });
   y -= 14;
-  const amounts = invoiceAmounts(invoice);
   const summaryRows = [
     ["Subtotal", amounts.subtotal],
     ...(amounts.discount !== 0 ? [[amounts.discount < 0 ? "Surcharge" : "Discount", amounts.discount]] : []),
     [`Tax (${invoice.tax_rate}%)`, amounts.tax],
+    ...(paidAmount > 0 ? [["Amount paid", -paidAmount], ["Balance due", Math.max(0, amounts.total - paidAmount)]] : []),
   ];
   summaryRows.forEach(([label, amount]) => {
     ensureSpace(22);
@@ -1314,15 +1466,37 @@ async function downloadInvoicePdf(invoice) {
       ? `- ${currencyAmount(Math.abs(amount), invoice.currency)}`
       : label === "Surcharge"
         ? `+ ${currencyAmount(Math.abs(amount), invoice.currency)}`
-        : currencyAmount(amount, invoice.currency);
+        : label === "Amount paid"
+          ? currencyAmount(Math.abs(amount), invoice.currency)
+          : currencyAmount(amount, invoice.currency);
     draw(pdfSafeText(formatted), 450, y, { size: 10 });
     y -= 20;
   });
+  const paymentRecords = invoicePayments(invoice);
+  if (paidAmount > 0 && paymentRecords.length) {
+    ensureSpace(28);
+    y -= 4;
+    draw("PAYMENT HISTORY", left, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
+    y -= 15;
+    paymentRecords.forEach((payment) => {
+      ensureSpace(18);
+      const detail = `${formatDate(payment.paid_at)}${payment.reference ? ` - ${payment.reference}` : ""}`;
+      const rowTop = y;
+      drawWrapped(detail, left, 360, { size: 9 });
+      draw(pdfSafeText(currencyAmount(Number(payment.amount), invoice.currency)), 450, rowTop, { size: 9 });
+    });
+  }
   ensureSpace(34);
   page.drawLine({ start: { x: 350, y: y + 6 }, end: { x: right, y: y + 6 }, thickness: 1, color: green });
   draw("TOTAL", 350, y - 2, { size: 12, bold: true, color: green });
   draw(pdfSafeText(currencyAmount(amounts.total, invoice.currency)), 450, y - 2, { size: 12, bold: true, color: green });
   y -= 38;
+  if (invoice.terms) {
+    ensureSpace(40);
+    draw(invoice.document_type === "quote" ? "ESTIMATE TERMS" : "PAYMENT TERMS", left, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
+    y -= 15;
+    drawWrapped(invoice.terms, left, right - left, { size: 10 });
+  }
   if (invoice.notes) {
     ensureSpace(40);
     draw("NOTES", left, y, { size: 8, bold: true, color: rgb(0.45, 0.48, 0.45) });
@@ -1345,6 +1519,117 @@ async function downloadEditorPdf() {
     showMessage($("#editor-message"), "PDF downloaded.", true);
   } catch (error) {
     showMessage($("#editor-message"), error.message || "Could not create the PDF.");
+  }
+}
+
+function renderPaymentHistory(invoice) {
+  const history = $("#payment-history");
+  history.replaceChildren();
+  const records = invoicePayments(invoice).reverse();
+  if (!records.length) {
+    appendText(history, "p", "payment-history-empty", "No payments recorded yet.");
+    return;
+  }
+  records.forEach((payment) => {
+    const row = document.createElement("div");
+    row.className = "payment-history-row";
+    const detail = document.createElement("span");
+    detail.textContent = `${formatDate(payment.paid_at)}${payment.reference ? ` · ${payment.reference}` : ""}`;
+    appendText(row, "strong", "", currencyAmount(Number(payment.amount), invoice.currency));
+    row.prepend(detail);
+    history.append(row);
+  });
+}
+
+function updatePaymentDialog() {
+  if (!paymentInvoice) return;
+  const total = invoiceTotal(paymentInvoice);
+  const paid = invoicePaidAmount(paymentInvoice);
+  const balance = Math.max(0, total - paid);
+  $("#payment-total").textContent = currencyAmount(total, paymentInvoice.currency);
+  $("#payment-paid").textContent = currencyAmount(paid, paymentInvoice.currency);
+  $("#payment-balance").textContent = currencyAmount(balance, paymentInvoice.currency);
+  $("#payment-amount").max = balance.toFixed(2);
+  $("#payment-calculator-note").textContent = balance > 0
+    ? `Calculate a deposit as a percentage of the ${currencyAmount(balance, paymentInvoice.currency)} remaining balance.`
+    : "This invoice is fully paid.";
+  $("#payment-submit").disabled = balance <= 0.005;
+}
+
+function openPaymentDialog(invoice) {
+  if (!invoice || invoice.document_type !== "invoice") return;
+  paymentInvoice = invoice;
+  $("#payment-invoice-number").textContent = invoice.invoice_number;
+  $("#payment-date").value = today();
+  $("#payment-amount").value = "";
+  $("#deposit-percent").value = "";
+  $("#payment-reference").value = "";
+  showMessage($("#payment-message"), "");
+  renderPaymentHistory(invoice);
+  updatePaymentDialog();
+  $("#payment-dialog").showModal();
+}
+
+async function applyPayment(event) {
+  event.preventDefault();
+  if (!paymentInvoice || !$("#payment-form").reportValidity()) return;
+  const total = invoiceTotal(paymentInvoice);
+  const paid = invoicePaidAmount(paymentInvoice);
+  const balance = Math.max(0, total - paid);
+  const amount = Number($("#payment-amount").value);
+  const paidAt = $("#payment-date").value;
+  if (!Number.isFinite(amount) || amount <= 0 || Math.round((amount - balance) * 100) > 0) {
+    showMessage($("#payment-message"), `Enter a payment greater than zero and no more than ${currencyAmount(balance, paymentInvoice.currency)}.`);
+    return;
+  }
+  if (!paidAt) {
+    showMessage($("#payment-message"), "Choose the date the payment was received.");
+    return;
+  }
+
+  const button = $("#payment-submit");
+  button.disabled = true;
+  showMessage($("#payment-message"), "");
+  try {
+    const { data, error } = await supabase.from("invoice_payments").insert({
+      invoice_id: paymentInvoice.id,
+      user_id: currentUser.id,
+      business_id: paymentInvoice.business_id,
+      amount,
+      paid_at: paidAt,
+      reference: $("#payment-reference").value.trim() || null,
+    }).select().single();
+    if (error) throw error;
+    payments = [...payments, data];
+
+    const nextPaid = invoicePaidAmount(paymentInvoice);
+    const nextStatus = nextPaid >= total - 0.005 ? "paid" : "sent";
+    let statusError = null;
+    if (paymentInvoice.status !== nextStatus) {
+      const result = await supabase.from("invoices").update({ status: nextStatus }).eq("id", paymentInvoice.id).select("id").maybeSingle();
+      statusError = result.error || (!result.data ? new Error("Invoice was not found while updating its payment status.") : null);
+    }
+    const savedInvoice = paymentInvoice;
+    const loaded = await loadWorkspace();
+    $("#payment-dialog").close();
+    const message = activeView === "dashboard"
+      ? $("#dashboard-message")
+      : activeView === "overview"
+        ? $("#overview-message")
+        : activeView === "editor"
+          ? $("#editor-message")
+          : $("#business-message");
+    if (statusError) {
+      showMessage(message, `Payment saved, but invoice status could not be updated: ${statusError.message}`);
+    } else if (!loaded) {
+      showMessage(message, "Payment saved, but the workspace could not be refreshed. Reload to see the updated balance.");
+    } else {
+      showMessage(message, `Payment of ${currencyAmount(amount, savedInvoice.currency)} recorded.`, true);
+    }
+  } catch (error) {
+    showMessage($("#payment-message"), error.message || "Could not save the payment.");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1403,11 +1688,14 @@ async function handleDocumentAction(event) {
     } finally {
       button.disabled = false;
     }
+  } else if (button.dataset.action === "payment") {
+    openPaymentDialog(invoice);
   } else if (button.dataset.action === "convert" && invoice.document_type === "quote") {
     const { error } = await supabase.from("invoices").update({
       document_type: "invoice",
       invoice_number: nextDocumentNumber("invoice", invoice.issue_date, invoice.client_id, invoice.business_id),
       status: "draft",
+      terms: INVOICE_TERMS,
     }).eq("id", invoice.id);
     if (error) {
       showMessage(activeView === "dashboard" ? $("#dashboard-message") : $("#business-message"), `Could not convert quote: ${error.message}`);
@@ -1662,6 +1950,26 @@ $("#business-search").addEventListener("input", (event) => {
 });
 $("#business-document-rows").addEventListener("click", handleDocumentAction);
 $("#invoice-rows").addEventListener("click", handleDocumentAction);
+$("#preview-apply-payment").addEventListener("click", () => {
+  const invoice = invoices.find((entry) => entry.id === editingId);
+  if (invoice) openPaymentDialog(invoice);
+});
+$("#payment-form").addEventListener("submit", applyPayment);
+$("#payment-amount").addEventListener("input", () => {
+  $("#deposit-percent").value = "";
+});
+$("#deposit-percent").addEventListener("input", () => {
+  if (!paymentInvoice) return;
+  const percent = Number($("#deposit-percent").value);
+  const balance = Math.max(0, invoiceTotal(paymentInvoice) - invoicePaidAmount(paymentInvoice));
+  if (Number.isFinite(percent) && percent > 0 && percent <= 100) {
+    $("#payment-amount").value = (Math.round(balance * percent) / 100).toFixed(2);
+  } else {
+    $("#payment-amount").value = "";
+  }
+});
+$("#payment-cancel").addEventListener("click", () => $("#payment-dialog").close());
+$("#payment-close").addEventListener("click", () => $("#payment-dialog").close());
 $("#back-to-dashboard").addEventListener("click", () => setView("dashboard"));
 $("#cancel-edit").addEventListener("click", () => setView("business"));
 $("#mobile-cancel").addEventListener("click", () => setView("business"));
@@ -1688,6 +1996,25 @@ $("#sign-out").addEventListener("click", async () => {
   const { error } = await supabase.auth.signOut();
   if (error) showMessage($("#overview-message"), `Could not sign out: ${error.message}`);
   else setAuthenticated(null);
+});
+$("#auth-reset").addEventListener("click", async () => {
+  if (!supabase) {
+    showMessage(authMessage, "Configure Supabase before requesting a password reset.");
+    return;
+  }
+  const button = $("#auth-reset");
+  button.disabled = true;
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(ALLOWED_ACCOUNT_EMAIL, {
+      redirectTo: window.location.href,
+    });
+    if (error) throw error;
+    showMessage(authMessage, "If password recovery is enabled, a reset link will be sent to the authorized account.", true);
+  } catch (error) {
+    showMessage(authMessage, `Could not request a password reset: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
 });
 window.addEventListener("afterprint", () => document.body.classList.remove("printing"));
 

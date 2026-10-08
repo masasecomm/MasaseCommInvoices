@@ -12,18 +12,22 @@ A responsive invoice app hosted as a static site on GitHub Pages. Supabase provi
 - Number invoices sequentially by issue date (`INV-yyyy-mm-dd-1`) or, when a saved client is selected, by client (`INV-Client-Name-1`). Existing documents keep their assigned numbers.
 - Automatically save complete document drafts and notes as you edit them.
 - Automatically remember line-item products and prices in the business catalogue for reuse.
+- Find saved products regardless of capitalization, and avoid duplicate catalogue entries that differ only by case.
 - Add line items, tax, currency, status, dates, and notes.
+- Add editable estimate and invoice terms; converting an estimate switches to the default invoice payment terms.
+- Record multiple dated part-payments, calculate a deposit as a percentage of the remaining balance, and show paid percentage, amount received, and balance due on documents.
+- Display a paid or partially-paid stamp on invoice previews, printed documents, downloaded PDFs, and emailed PDFs.
 - Apply discounts as a percentage or fixed amount. A negative discount amount is treated as a surcharge.
 - Calculate totals and directly download quotes and invoices as PDFs, or print them.
 - Email a saved quote or invoice PDF directly to the client's email address.
 - Restrict sign-in and database access to the authorized Masase Commerce account, with Supabase authentication and row-level security.
 
-The default currency is ZAR. Change the currency code on each invoice when needed.
+The default currency is South African rand (ZAR), displayed with the `R` symbol. Change the currency code on each invoice when needed. The workspace uses the available screen width and adapts to mobile layouts.
 
 ## Set up cloud storage
 
 1. Create a Supabase project.
-2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client, product catalogue, document, and logo-storage policies. If you already have this app set up, rerun the full script to add the product catalogue and the latest security policies; it preserves existing records.
+2. In the Supabase SQL Editor, run [`supabase/schema.sql`](./supabase/schema.sql). It creates the business, client, product catalogue, document, dated invoice-payment ledger, and logo-storage policies. If you already have this app set up, rerun the full script to add the new terms field, payment ledger, and latest security policies; it preserves existing records.
 3. In Supabase project settings, copy the Project URL and the publishable key (or legacy `anon` key).
 4. Add those values to [`config.js`](./config.js):
 
@@ -40,7 +44,7 @@ The default currency is ZAR. Change the currency code on each invoice when neede
 
 Because GitHub Pages is static hosting, the Supabase URL and publishable/anon key in `config.js` are visible to site visitors. This is expected: authentication and row-level security—not hiding the public key—protect invoice data.
 
-The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor so product storage and the latest policies are applied. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
+The login UI and database policies restrict access to `masasecomm@gmail.com`. After updating an existing project, rerun [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL Editor so the payment ledger and latest policies are applied. Never store the account password in this repository or share it in chat; if a password has been exposed, change it in Supabase before using it.
 
 ## Set up customer email
 
@@ -48,7 +52,7 @@ Customer emails are sent by a Supabase Edge Function through Resend. The Resend 
 
 1. Create a Resend account and verify a sending domain. Copy its API key and choose a sender address on that verified domain, such as `Masase Commerce <invoices@your-domain.com>`.
 2. Install the Supabase CLI, sign in with `npx supabase login`, and link this repository to your project with `npx supabase link --project-ref iuuhshxpepccqjypreti`.
-3. Set the email provider secrets and deploy the function from the repository root:
+3. Set the email provider secrets and deploy the function from the repository root. Redeploy this function after pulling changes so emailed PDFs include the current invoice terms and payment details:
 
    ```powershell
    npx supabase secrets set RESEND_API_KEY=re_your_key "EMAIL_FROM=Masase Commerce <invoices@your-domain.com>"

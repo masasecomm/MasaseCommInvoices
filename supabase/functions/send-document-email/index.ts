@@ -31,9 +31,16 @@ type Invoice = {
   tax_rate: number;
   discount_type: "amount" | "percent";
   discount_value: number;
+  terms: string | null;
   notes: string | null;
   status: "draft" | "sent" | "paid";
   items: LineItem[];
+};
+
+type Payment = {
+  amount: number;
+  paid_at: string;
+  reference: string | null;
 };
 
 type Business = {
@@ -74,6 +81,7 @@ function calculateAmounts(invoice: Invoice) {
 }
 
 function money(value: number, currency: string) {
+  if (currency === "ZAR") return `R ${value.toFixed(2)}`;
   return `${currency} ${value.toFixed(2)}`;
 }
 
@@ -103,7 +111,7 @@ function wrapText(text: string, maxWidth: number, size: number, font: PDFFont) {
   return lines.length ? lines : [""];
 }
 
-async function createPdf(invoice: Invoice, business: Business) {
+async function createPdf(invoice: Invoice, business: Business, paidTotal: number, payments: Payment[]) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -143,11 +151,15 @@ async function createPdf(invoice: Invoice, business: Business) {
 
   draw(invoice.document_type === "quote" ? "QUOTE" : "INVOICE", margin, y, 11, bold, accentColor);
   draw(invoice.invoice_number, margin, y - 22, 22, bold);
+  const amounts = calculateAmounts(invoice);
+  const paid = Math.min(amounts.total, invoice.status === "paid" ? amounts.total : paidTotal);
+  const paidPercent = amounts.total > 0 ? Math.round(paid / amounts.total * 1000) / 10 : 0;
+  if (paid > 0) draw(paidPercent >= 100 ? "PAID - 100%" : `PARTIALLY PAID - ${paidPercent}%`, margin, y - 47, 9, bold, accentColor);
   const businessLines = wrapText(business.name || invoice.issuer_name, right - margin, 12, bold);
   businessLines.forEach((line, index) => {
     draw(line, right - bold.widthOfTextAtSize(line, 12), y - 2 - index * 15, 12, bold);
   });
-  y -= 65;
+  y -= paid > 0 ? 78 : 65;
 
   const columnWidth = 235;
   draw("FROM", margin, y, 8, bold, mutedColor);
@@ -179,8 +191,7 @@ async function createPdf(invoice: Invoice, business: Business) {
     y -= rowHeight;
   }
 
-  const amounts = calculateAmounts(invoice);
-  ensureSpace(112 + (invoice.notes ? 62 : 0));
+  ensureSpace(140 + (invoice.notes ? 62 : 0) + (invoice.terms ? 62 : 0));
   page.drawLine({ start: { x: margin, y }, end: { x: right, y }, thickness: 0.5, color: mutedColor });
   y -= 20;
   const summary = (label: string, value: string, strong = false) => {
@@ -194,6 +205,37 @@ async function createPdf(invoice: Invoice, business: Business) {
   }
   summary(`Tax (${invoice.tax_rate}%)`, money(amounts.tax, invoice.currency));
   summary("Total", money(amounts.total, invoice.currency), true);
+  if (paid > 0) {
+    summary("Amount paid", money(paid, invoice.currency));
+    summary("Balance due", money(Math.max(0, amounts.total - paid), invoice.currency), true);
+  }
+
+  if (paid > 0 && payments.length) {
+    y -= 4;
+    ensureSpace(24);
+    draw("PAYMENT HISTORY", margin, y, 8, bold, mutedColor);
+    y -= 15;
+    for (const payment of payments) {
+      ensureSpace(18);
+      const rowTop = y;
+      const detail = `${payment.paid_at}${payment.reference ? ` - ${payment.reference}` : ""}`;
+      const lineHeight = drawWrapped(detail, margin, rowTop, 350, 9);
+      draw(money(Number(payment.amount), invoice.currency), 465, rowTop, 9);
+      y -= Math.max(14, lineHeight);
+    }
+  }
+
+  if (invoice.terms) {
+    y -= 12;
+    draw(invoice.document_type === "quote" ? "ESTIMATE TERMS" : "PAYMENT TERMS", margin, y, 8, bold, mutedColor);
+    y -= 15;
+    const lines = wrapText(invoice.terms, right - margin, 9, regular);
+    for (const line of lines) {
+      ensureSpace(16);
+      draw(line, margin, y, 9);
+      y -= 13;
+    }
+  }
 
   if (invoice.notes) {
     y -= 12;
@@ -266,7 +308,18 @@ Deno.serve(async (request) => {
     .single();
   if (businessError || !business) return jsonResponse({ error: "The business profile for this document could not be found." }, 404);
 
-  const pdfBytes = await createPdf(document, business as Business);
+  const { data: paymentRows, error: paymentsError } = await supabase
+    .from("invoice_payments")
+    .select("amount, paid_at, reference")
+    .eq("invoice_id", document.id)
+    .eq("user_id", userData.user.id)
+    .order("paid_at", { ascending: true });
+  if (paymentsError) return jsonResponse({ error: "Payment details could not be loaded for this document." }, 500);
+  const recordedPayments = (paymentRows || []).reduce((sum, payment) => sum + Number(payment.amount), 0);
+  const totalPaid = document.status === "paid" && recordedPayments === 0
+    ? calculateAmounts(document).total
+    : recordedPayments;
+  const pdfBytes = await createPdf(document, business as Business, totalPaid, (paymentRows || []) as Payment[]);
   let binary = "";
   for (let offset = 0; offset < pdfBytes.length; offset += 0x8000) {
     binary += String.fromCharCode(...pdfBytes.subarray(offset, offset + 0x8000));
@@ -276,11 +329,14 @@ Deno.serve(async (request) => {
   const filename = `${document.document_type}-${safeNumber}.pdf`;
   const title = document.document_type === "quote" ? "Quote" : "Invoice";
   const total = money(calculateAmounts(document).total, document.currency);
+  const paid = Math.min(calculateAmounts(document).total, totalPaid);
+  const balance = Math.max(0, calculateAmounts(document).total - paid);
   const subject = `Your ${title.toLowerCase()} ${document.invoice_number} from ${document.issuer_name}`;
   const html = [
     `<p>Hello ${escapeHtml(document.client_name)},</p>`,
     `<p>Please find your ${title.toLowerCase()} <strong>${escapeHtml(document.invoice_number)}</strong> from ${escapeHtml(document.issuer_name)} attached as a PDF.</p>`,
     `<p>Total: <strong>${escapeHtml(total)}</strong><br>`,
+    ...(paid > 0 ? [`Paid: <strong>${escapeHtml(money(paid, document.currency))}</strong><br>Balance due: <strong>${escapeHtml(money(balance, document.currency))}</strong><br>`] : []),
     `${document.document_type === "quote" ? "Valid until" : "Due date"}: ${escapeHtml(document.due_date)}</p>`,
     `<p>Thank you,<br>${escapeHtml(document.issuer_name)}</p>`,
   ].join("");

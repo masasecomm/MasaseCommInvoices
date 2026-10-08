@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f5f6f3">
+    <meta name="theme-color" content="#f4f5f6">
     <meta name="description" content="Create, manage, and print your invoices from anywhere.">
     <title>Masase Commerce Invoices</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -13,34 +13,21 @@
   </head>
   <body>
     <main id="auth-panel" class="auth-layout">
-      <section class="auth-brand">
-        <a class="brand" href="./" aria-label="Masase invoices home">
-          <span class="brand-mark" aria-hidden="true">M</span>
-          <span>masase<span class="brand-light"> / invoices</span></span>
-        </a>
-        <div class="auth-pitch">
-          <span class="eyebrow">YOUR BUSINESS, IN GOOD ORDER</span>
-          <h1>Good work<br>deserves a<br><span>great invoice.</span></h1>
-          <p>Create clear, professional invoices and pick up where you left off on any device.</p>
-          <div class="auth-proof"><span class="proof-dot"></span> Your invoices, securely synced</div>
-        </div>
-        <span class="auth-footnote">A simpler way to keep business moving.</span>
-      </section>
       <section class="auth-main">
         <div class="auth-card">
-          <div class="mobile-brand brand">
-            <span class="brand-mark" aria-hidden="true">M</span>
-            <span>masase<span class="brand-light"> / invoices</span></span>
+          <div class="auth-logo">
+            <span class="brand-mark" aria-hidden="true">R</span>
+            <span>Masase Commerce</span>
           </div>
-          <span class="eyebrow" id="auth-eyebrow">WELCOME BACK</span>
-          <h2 id="auth-heading">Sign in to your account</h2>
-          <p class="muted" id="auth-description">Your business is right where you left it.</p>
+          <h1 id="auth-heading">Sign in</h1>
+          <p class="muted" id="auth-description">Access your invoices and business workspace.</p>
           <p class="notice notice-info" id="setup-notice" hidden></p>
           <form id="auth-form">
             <label class="field-label" for="auth-email">Email address</label>
             <input id="auth-email" name="email" type="email" autocomplete="username" value="masasecomm@gmail.com" readonly required>
             <label class="field-label" for="auth-password">Password</label>
             <input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters" required>
+            <button class="auth-reset" id="auth-reset" type="button">Forgot password?</button>
             <button class="button button-primary button-wide" id="auth-submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
           </form>
           <p class="auth-switch">Sign in with the authorized Masase Commerce account.</p>
@@ -53,7 +40,7 @@
     <main id="app-panel" class="app-shell" hidden>
       <header class="topbar">
         <a class="brand" href="./" aria-label="Masase invoices home">
-          <span class="brand-mark" aria-hidden="true">M</span>
+          <span class="brand-mark" aria-hidden="true">R</span>
           <span>masase<span class="brand-light"> / invoices</span></span>
         </a>
         <nav class="workspace-nav" aria-label="Workspace">
@@ -259,6 +246,7 @@
                 <div class="form-field"><label for="issue-date">Issue date</label><input id="issue-date" name="issue_date" type="date" required></div>
                 <div class="form-field"><label for="due-date"><span id="due-date-label">Due date</span></label><input id="due-date" name="due_date" type="date" required></div>
                 <div class="form-field"><label for="invoice-status">Status</label><select id="invoice-status" name="status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="paid">Paid</option></select></div>
+                <div class="form-field field-full"><label for="invoice-terms">Payment / estimate terms</label><textarea id="invoice-terms" name="terms" rows="3" maxlength="2000" placeholder="Payment terms and conditions"></textarea></div>
               </div>
             </section>
 
@@ -311,8 +299,13 @@
                 <div class="preview-items-heading"><span>ITEM</span><span>AMOUNT</span></div>
                 <div id="preview-items"></div>
                 <div class="preview-summary" id="preview-summary"></div>
+                <div class="preview-payment" id="preview-payment" hidden></div>
+                <div class="preview-payment-history" id="preview-payment-history" hidden></div>
+                <div class="preview-payment-stamp" id="preview-payment-stamp" hidden></div>
+                <p class="preview-terms" id="preview-terms"></p>
                 <p class="preview-notes" id="preview-notes"></p>
               </article>
+              <button class="button button-secondary preview-payment-button" id="preview-apply-payment" type="button" hidden>Apply payment</button>
               <button class="button button-secondary preview-download" id="preview-download-pdf" type="button">Download PDF</button>
             </section>
           </aside>
@@ -320,7 +313,33 @@
         <div class="mobile-save-bar"><button class="button button-secondary" id="mobile-cancel" type="button">Cancel</button><button class="button button-secondary" id="mobile-download-pdf" type="button">PDF</button><button class="button button-primary" id="mobile-save" type="button">Save document <span aria-hidden="true">→</span></button></div>
       </section>
 
-      <section id="print-view" aria-label="Printable invoice"></section>
+        <dialog id="payment-dialog" class="payment-dialog" aria-labelledby="payment-dialog-title">
+          <form id="payment-form">
+            <div class="payment-dialog-heading">
+              <div><span class="eyebrow">INVOICE PAYMENT</span><h2 id="payment-dialog-title">Apply payment</h2><p id="payment-invoice-number" class="muted"></p></div>
+              <button class="dialog-close" id="payment-close" type="button" aria-label="Close payment dialog">×</button>
+            </div>
+            <div class="payment-balance-grid">
+              <div><span>Total</span><strong id="payment-total"></strong></div>
+              <div><span>Paid so far</span><strong id="payment-paid"></strong></div>
+              <div><span>Balance</span><strong id="payment-balance"></strong></div>
+            </div>
+            <div class="form-grid form-grid-two">
+              <div class="form-field"><label for="payment-amount">Payment amount</label><input id="payment-amount" name="amount" type="number" min="0.01" step="0.01" required></div>
+              <div class="form-field"><label for="payment-date">Payment date</label><input id="payment-date" name="paid_at" type="date" required></div>
+              <div class="form-field"><label for="deposit-percent">Deposit % of balance</label><input id="deposit-percent" type="number" min="0.01" max="100" step="0.01" placeholder="e.g. 50"></div>
+              <div class="form-field"><label for="payment-reference">Reference <span class="optional">OPTIONAL</span></label><input id="payment-reference" name="reference" maxlength="120" placeholder="Receipt or transfer reference"></div>
+            </div>
+            <p class="payment-calculator-note" id="payment-calculator-note">Enter an amount or a deposit percentage to calculate it.</p>
+            <section class="payment-history-section">
+              <h3>Payment history</h3>
+              <div id="payment-history" class="payment-history"></div>
+            </section>
+            <p class="form-message" id="payment-message" role="status" aria-live="polite"></p>
+            <div class="payment-dialog-actions"><button class="button button-secondary" id="payment-cancel" type="button">Cancel</button><button class="button button-primary" id="payment-submit" type="submit">Save payment</button></div>
+          </form>
+        </dialog>
+        <section id="print-view" aria-label="Printable invoice"></section>
     </main>
     <script type="module" src="./app.js"></script>
   </body>

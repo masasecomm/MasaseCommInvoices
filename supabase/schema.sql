@@ -60,6 +60,7 @@ create table if not exists public.invoices (
   tax_rate numeric(5, 2) not null default 0 check (tax_rate between 0 and 100),
   discount_type text not null default 'amount' check (discount_type in ('amount', 'percent')),
   discount_value numeric(12, 2) not null default 0,
+  terms text check (terms is null or char_length(terms) <= 2000),
   notes text check (notes is null or char_length(notes) <= 3000),
   status text not null default 'draft' check (status in ('draft', 'sent', 'paid')),
   items jsonb not null check (jsonb_typeof(items) = 'array' and jsonb_array_length(items) between 1 and 100),
@@ -75,6 +76,7 @@ alter table public.invoices add column if not exists client_id uuid references p
 alter table public.invoices add column if not exists document_type text not null default 'invoice';
 alter table public.invoices add column if not exists discount_type text not null default 'amount';
 alter table public.invoices add column if not exists discount_value numeric(12, 2) not null default 0;
+alter table public.invoices add column if not exists terms text;
 alter table public.invoices drop constraint if exists invoices_document_type_check;
 alter table public.invoices add constraint invoices_document_type_check
   check (document_type in ('quote', 'invoice'));
@@ -84,6 +86,78 @@ alter table public.invoices add constraint invoices_discount_type_check
 alter table public.invoices drop constraint if exists invoices_discount_percent_range;
 alter table public.invoices add constraint invoices_discount_percent_range
   check (discount_type != 'percent' or discount_value between -100 and 100);
+alter table public.invoices drop constraint if exists invoices_terms_length_check;
+alter table public.invoices add constraint invoices_terms_length_check
+  check (terms is null or char_length(terms) <= 2000);
+
+create table if not exists public.invoice_payments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  business_id uuid not null references public.businesses (id) on delete cascade,
+  invoice_id uuid not null references public.invoices (id) on delete cascade,
+  amount numeric(12, 2) not null check (amount > 0),
+  paid_at date not null default current_date,
+  reference text check (reference is null or char_length(reference) <= 120),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists invoice_payments_user_invoice_date_idx
+  on public.invoice_payments (user_id, invoice_id, paid_at desc);
+
+create or replace function public.validate_invoice_payment()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  invoice_row public.invoices%rowtype;
+  subtotal numeric := 0;
+  discount numeric := 0;
+  invoice_total numeric := 0;
+  prior_payments numeric := 0;
+begin
+  select *
+  into invoice_row
+  from public.invoices
+  where id = new.invoice_id
+    and user_id = new.user_id
+    and business_id = new.business_id
+    and document_type = 'invoice'
+  for update;
+
+  if not found then
+    raise exception 'The invoice for this payment could not be found.'
+      using errcode = '23503';
+  end if;
+
+  select coalesce(sum((line_item ->> 'quantity')::numeric * (line_item ->> 'unit_price')::numeric), 0)
+  into subtotal
+  from jsonb_array_elements(invoice_row.items) as item(line_item);
+
+  discount := case
+    when invoice_row.discount_type = 'percent' then subtotal * invoice_row.discount_value / 100
+    else invoice_row.discount_value
+  end;
+  invoice_total := (subtotal - discount) * (1 + invoice_row.tax_rate / 100);
+
+  select coalesce(sum(amount), 0)
+  into prior_payments
+  from public.invoice_payments
+  where invoice_id = new.invoice_id;
+
+  if prior_payments + new.amount > invoice_total + 0.005 then
+    raise exception 'The payment exceeds the outstanding invoice balance.'
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists validate_invoice_payment_before_insert on public.invoice_payments;
+create trigger validate_invoice_payment_before_insert
+  before insert on public.invoice_payments
+  for each row execute function public.validate_invoice_payment();
 
 insert into public.businesses (user_id, name, email, address)
 select distinct on (user_id, issuer_name)
@@ -120,6 +194,7 @@ alter table public.businesses enable row level security;
 alter table public.clients enable row level security;
 alter table public.products enable row level security;
 alter table public.invoices enable row level security;
+alter table public.invoice_payments enable row level security;
 
 create or replace function public.is_masasecomm_invoice_user()
 returns boolean
@@ -297,6 +372,39 @@ create policy "Users can delete invoices in their businesses"
     (select auth.uid()) = user_id
     and (select public.is_masasecomm_invoice_user())
     and exists (select 1 from public.businesses b where b.id = public.invoices.business_id and b.user_id = (select auth.uid()))
+  );
+
+drop policy if exists "Users can view payments for their invoices" on public.invoice_payments;
+create policy "Users can view payments for their invoices"
+  on public.invoice_payments for select
+  to authenticated
+  using (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (
+      select 1
+      from public.invoices i
+      where i.id = public.invoice_payments.invoice_id
+        and i.user_id = (select auth.uid())
+        and i.business_id = public.invoice_payments.business_id
+    )
+  );
+
+drop policy if exists "Users can create payments for their invoices" on public.invoice_payments;
+create policy "Users can create payments for their invoices"
+  on public.invoice_payments for insert
+  to authenticated
+  with check (
+    (select auth.uid()) = user_id
+    and (select public.is_masasecomm_invoice_user())
+    and exists (
+      select 1
+      from public.invoices i
+      where i.id = public.invoice_payments.invoice_id
+        and i.user_id = (select auth.uid())
+        and i.business_id = public.invoice_payments.business_id
+        and i.document_type = 'invoice'
+    )
   );
 
 create or replace function public.set_updated_at()
